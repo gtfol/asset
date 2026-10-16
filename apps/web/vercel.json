@@ -6,7 +6,7 @@
   "functions": {
     "api/index.ts": {
       "maxDuration": 60,
-      "includeFiles": "server/migrations/*.sql"
+      "includeFiles": "server/{migrations/*.sql,certs/*.crt}"
     }
   },
   "rewrites": [{ "source": "/api/:path*", "destination": "/api" }]

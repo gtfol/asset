@@ -1,7 +1,9 @@
 import { PGlite } from '@electric-sql/pglite';
 import { attachDatabasePool } from '@vercel/functions';
 import pg from 'pg';
+import { readFileSync } from 'node:fs';
 import { readFile, readdir, mkdir } from 'node:fs/promises';
+import { checkServerIdentity } from 'node:tls';
 import { validateState, type State } from '../shared/core.js';
 import { assertHostedPayloadSize } from './hosting.js';
 export interface SQL {
@@ -13,10 +15,30 @@ export interface Database extends SQL {
 }
 export function databasePoolOptions(connectionString: string): pg.PoolConfig {
   const url = new URL(connectionString);
-  if (url.hostname.endsWith('.supabase.co') || url.hostname.endsWith('.pooler.supabase.com'))
-    url.searchParams.set('sslmode', 'verify-full');
+  const supabase =
+    url.hostname.endsWith('.supabase.co') || url.hostname.endsWith('.pooler.supabase.com');
+  let ssl: pg.PoolConfig['ssl'];
+  if (supabase) {
+    // pg's URL settings replace the ssl object, including its trusted CA and verification.
+    for (const key of [
+      'ssl',
+      'sslmode',
+      'sslcert',
+      'sslkey',
+      'sslrootcert',
+      'sslnegotiation',
+      'uselibpqcompat',
+    ])
+      url.searchParams.delete(key);
+    ssl = {
+      ca: readFileSync(new URL('./certs/supabase-prod-ca-2021.crt', import.meta.url), 'utf8'),
+      rejectUnauthorized: true,
+      checkServerIdentity,
+    };
+  }
   return {
-    connectionString: url.toString(),
+    connectionString: supabase ? url.toString() : connectionString,
+    ...(ssl ? { ssl } : {}),
     max: process.env.VERCEL === '1' ? 2 : 5,
     connectionTimeoutMillis: 10000,
     idleTimeoutMillis: 5000,

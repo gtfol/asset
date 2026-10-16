@@ -63,7 +63,7 @@ Set these in Vercel's environment settings, then redeploy:
 
 None of these variables need a `VITE_` prefix. Authentication runs on the server; no Google secret, database password, or Google access/refresh token is stored in browser JavaScript. Never commit actual environment values.
 
-The first API request applies the SQL files in `server/migrations` atomically. A transaction-level advisory lock serializes concurrent cold starts, and the migration ledger skips already-applied versions. Configure a **dedicated** database: the app uses its own tables in `public`. Do not separately create tables or copy a schema from another gtfol app. Hosted startup requires `DATABASE_URL`; it will never silently create an ephemeral local database. Supabase connections require certificate-verified TLS.
+The first API request applies the SQL files in `server/migrations` atomically. A transaction-level advisory lock serializes concurrent cold starts, and the migration ledger skips already-applied versions. Configure a **dedicated** database: the app uses its own tables in `public`. Do not separately create tables or copy a schema from another gtfol app. Hosted startup requires `DATABASE_URL`; it will never silently create an ephemeral local database. Supabase connections verify the server's certificate and hostname using the [official public root certificate](server/certs/README.md) bundled with the API.
 
 ### Google sign-in
 

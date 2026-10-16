@@ -3,6 +3,8 @@ import express from 'express';
 import pg from 'pg';
 import { createServer, type Server } from 'node:http';
 import { once } from 'node:events';
+import { X509Certificate } from 'node:crypto';
+import { checkServerIdentity, type ConnectionOptions, type PeerCertificate } from 'node:tls';
 import { createServerlessApp } from '../api/index';
 import {
   acceptedOrigins,
@@ -179,16 +181,41 @@ describe('hosted database initialization', () => {
     vi.stubEnv('VERCEL', '1');
     await expect(openDatabase(':memory:')).rejects.toThrow('DATABASE_URL is required');
     const options = databasePoolOptions(
-      'postgres://fixture:fixture@aws-0-us-west-1.pooler.supabase.com:6543/postgres?sslmode=disable',
+      'postgres://fixture:fixture@aws-0-us-west-1.pooler.supabase.com:6543/postgres?sslmode=disable&ssl=no-verify&sslrootcert=missing-file&sslcert=missing-file&sslkey=missing-file&sslnegotiation=direct&uselibpqcompat=true&application_name=asset',
     );
-    expect(new URL(options.connectionString!).searchParams.get('sslmode')).toBe('verify-full');
+    expect([...new URL(options.connectionString!).searchParams]).toEqual([
+      ['application_name', 'asset'],
+    ]);
+    // Inspect pg's parsed settings too: URL options must not replace the trusted ssl object.
+    const client = new pg.Client(options) as unknown as {
+      connectionParameters: { ssl: ConnectionOptions };
+    };
+    const ssl = client.connectionParameters.ssl;
+    expect(ssl.rejectUnauthorized).toBe(true);
+    expect(ssl.checkServerIdentity).toBe(checkServerIdentity);
+    const certificate = new X509Certificate(ssl.ca as string);
+    expect(certificate.fingerprint256).toBe(
+      '80:70:25:AD:50:D4:ED:21:9D:2C:9C:7D:29:9C:00:4F:82:4E:B0:0C:F7:F6:5A:FE:F6:07:D0:7B:72:E6:CA:FA',
+    );
+    expect(certificate.ca).toBe(true);
+    expect(certificate.verify(certificate.publicKey)).toBe(true);
+    const peer = { subjectaltname: 'DNS:*.pooler.supabase.com' } as PeerCertificate;
+    expect(ssl.checkServerIdentity!('aws-0-us-west-1.pooler.supabase.com', peer)).toBeUndefined();
+    expect(ssl.checkServerIdentity!('attacker.invalid', peer)).toBeInstanceOf(Error);
     expect(options.max).toBe(2);
     expect(options.idleTimeoutMillis).toBe(5000);
-    expect(
-      new URL(databasePoolOptions('postgres://localhost/asset').connectionString!).searchParams.has(
-        'sslmode',
-      ),
-    ).toBe(false);
+  });
+
+  it('preserves TLS configuration for databases outside Supabase', () => {
+    for (const connectionString of [
+      'postgres://localhost/asset',
+      'postgres://db.example/asset?sslmode=verify-full&sslrootcert=custom-ca.crt',
+      'postgres://pooler.supabase.com.attacker.invalid/asset?sslmode=require',
+    ]) {
+      const options = databasePoolOptions(connectionString);
+      expect(options.connectionString).toBe(connectionString);
+      expect(options.ssl).toBeUndefined();
+    }
   });
 
   it('applies each migration once and rolls back a failed migration with its tracking row', async () => {
