@@ -31,6 +31,8 @@ The browser retains only an expiring, session-bound Link context for OAuth recov
 
 All 98 web tests, the TypeScript/Vite build, native-resource check, 92 native regressions, calculation parity, and unsigned simulator build pass. The emitted Vercel Node 24 function includes migrations 004 and 005, initializes them, and passes demo/session/state checks. Real Sandbox linking, webhook delivery from Plaid, signed-device OAuth, and Production access remain unverified. The native credential form builds but has not received a new rendered-device review in this change.
 
+The live Vercel deployment applied the credential migration and reports encrypted storage and worker configuration ready. The browser retained its Google session through the deployment and displayed the per-user form with the correct web redirect URI. The OAuth return path serves the app, unauthorized worker requests return 401, and the synthetic demo still returns 6 accounts and 1,635 transactions. No Plaid credentials or private financial records were submitted during these hosted checks.
+
 ## Google authentication and Vercel API
 
 October 16: email/password forms and server sign-in routes were removed. Google OAuth uses the direct `https://asset.gtfol.dev/api/auth/callback/google` callback. Google ID tokens are verified with Google's signing keys, issuer, audience, expiration, authorized party, verified email, and flow nonce. Browser state cookies and server-side PKCE protect callback completion; iOS exchanges a one-time code using an independent PKCE verifier. Workspaces map by Google subject and never merge solely by email. The native browser flow handles cancellation and workspace changes; Keychain replacement preserves the old credential when a replacement fails.

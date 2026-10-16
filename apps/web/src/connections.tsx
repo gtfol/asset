@@ -294,7 +294,7 @@ export function ConnectionsDialog({
                   void credentials(false);
                 }}
               >
-                <div className="form-grid">
+                <div className="form-grid plaid-credential-fields">
                   <label>
                     Environment
                     <select

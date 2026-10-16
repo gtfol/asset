@@ -73,6 +73,7 @@ export function createApp(
       (await processJob(db, resolveProvider, { deadline }))
     )
       processed++;
+    console.info('Plaid sync worker completed', { processed });
     res.json({ ok: true, processed });
   });
   app.post(

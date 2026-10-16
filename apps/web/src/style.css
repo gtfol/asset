@@ -2307,6 +2307,9 @@ dialog label {
   .form-grid {
     gap: 0 12px;
   }
+  .plaid-credential-fields {
+    grid-template-columns: 1fr;
+  }
   .dialog-body {
     padding: 20px;
   }
