@@ -336,49 +336,98 @@ struct ImportView: View {
 }
 struct ConnectionsView: View {
   @EnvironmentObject var store: Store
-  @State var product = "transactions"
-  @State var session: PlaidLinkSession?
-  @State var ready = false
-  @State var presenting = false
-  @State var loading = false
-  @State var updating: String?
-  @State var disconnecting: Row?
-  @State var remove = false
-  @State var confirm = ""
+  @State private var product = "transactions"
+  @State private var session: PlaidLinkSession?
+  @State private var lifecycle = PlaidLinkLifecycle()
+  @State private var presenting = false
+  @State private var presentedAttempt: UUID?
+  @State private var working = false
+  @State private var operationID: UUID?
+  @State private var operation: Task<Void, Never>?
+  @State private var configuration: Row?
+  @State private var configurationLoading = false
+  @State private var configurationLoadID: UUID?
+  @State private var configurationError = ""
+  @State private var clientID = ""
+  @State private var secret = ""
+  @State private var environment = "sandbox"
+  @State private var disconnecting: Row?
+  @State private var remove = false
+  @State private var confirm = ""
+
+  private struct Workspace {
+    let generation: Int
+    let server: String
+    let token: String
+  }
+  private var remote: Bool { store.mode == "remote" && !store.isDemo }
+  private var locked: Bool {
+    working || lifecycle.active || configurationLoading || presentedAttempt != nil
+  }
+  private var storageReady: Bool { configuration?.flag("storageReady") == true }
+  private var activeConnections: Bool {
+    store.connections.contains { $0.text("status") != "disconnected" }
+  }
+  private var environments: [String] {
+    configuration?.data["supportedEnvironments"] as? [String] ?? ["sandbox"]
+  }
+
+  private var connectionButtonTitle: String {
+    if lifecycle.consumed { return "Saving connection…" }
+    if lifecycle.ready { return "Connection ready" }
+    return lifecycle.active ? "Preparing connection…" : "Connect test institution"
+  }
+
   var body: some View {
     List {
       Section {
-        StatusLabel(text: "Sandbox only")
         Text("Sandbox uses test institutions and test data. It never connects a real bank.").font(
           .custom("Lato-Regular", size: 15, relativeTo: .subheadline))
       }
-      if store.mode != "remote" || store.isDemo {
+      if !remote {
         Text(
           "Sign in to a private server workspace to connect Plaid Sandbox. Local accounts and CSV work without a server."
         )
-      } else if !store.configured {
-        Text(
-          "Bank connections are not set up on this server yet."
-        )
       } else {
-        Section {
-          Picker("Connection type", selection: $product) {
-            Text("Bank / card · Transactions").tag("transactions")
-            Text("Brokerage · Investments").tag("investments")
+        credentialsSection
+        if configuration?.flag("configured") == true {
+          if configuration?.flag("workerReady") != true {
+            Text(
+              "Your Plaid credentials are saved. Bank syncing is not available on this server yet."
+            )
+            .foregroundStyle(Color.assetSecondary)
+          } else {
+            Section {
+              Picker("Connection type", selection: $product) {
+                Text("Bank / card · Transactions").tag("transactions")
+                Text("Brokerage · Investments").tag("investments")
+              }.disabled(locked)
+              Button(connectionButtonTitle) {
+                prepare()
+              }.disabled(locked)
+              if lifecycle.ready {
+                Button("Open Plaid Sandbox") {
+                  presentedAttempt = lifecycle.attempt?.id
+                  presenting = true
+                }
+              }
+              if lifecycle.active && !lifecycle.consumed {
+                Button("Cancel connection") { cancelLink() }
+              }
+              Text("Investment coverage varies by institution.").font(
+                .custom("Lato-Regular", size: 13, relativeTo: .caption)
+              ).foregroundStyle(Color.assetSecondary)
+            }
           }
-          Button(loading ? "Preparing…" : "Connect test institution") { prepare() }.disabled(
-            loading)
-          if ready { Button("Open Plaid Sandbox") { presenting = true } }
-          Text("Investment coverage varies by institution.").font(
-            .custom("Lato-Regular", size: 13, relativeTo: .caption)
-          ).foregroundStyle(Color.assetSecondary)
         }
       }
       ForEach(store.connections) { c in
         Section(c.text("institution_name")) {
           StatusLabel(text: c.text("status"))
-          Text("\(c.text("product")) · Last fetched \(c.text("last_synced_at","not yet"))").font(
-            .custom("Lato-Regular", size: 13, relativeTo: .caption))
+          Text(
+            "\(c.text("product").capitalized) · Last fetched \(c.text("last_synced_at", "not yet"))"
+          )
+          .font(.custom("Lato-Regular", size: 13, relativeTo: .caption))
           if !c.text("error_code").isEmpty {
             Text(c.text("error_code")).foregroundStyle(Color.assetAmber)
           }
@@ -387,104 +436,318 @@ struct ConnectionsView: View {
               a.text("name"),
               isOn: Binding(
                 get: { a.flag("enabled") },
-                set: { v in
+                set: { value in
                   let ids = store.accounts.filter {
-                    $0.text("connectionId") == c.id && ($0.id == a.id ? v : $0.flag("enabled"))
+                    $0.text("connectionId") == c.id && ($0.id == a.id ? value : $0.flag("enabled"))
                   }.map { $0.text("providerId") }
-                  Task {
-                    do {
-                      _ = try await store.request(
-                        "/plaid/\(c.id)/accounts", body: ["selected": ids])
-                      await store.refresh()
-                    } catch { store.error = error.localizedDescription }
-                  }
+                  perform("/plaid/\(c.id)/accounts", body: ["selected": ids])
                 })
-            ).disabled(c.text("status") == "disconnected")
+            ).disabled(locked || c.text("status") == "disconnected")
           }
           if c.text("status") != "disconnected" {
-            Button("Check for updates") {
-              Task {
-                do {
-                  _ = try await store.request("/plaid/\(c.id)/sync", body: [:])
-                  await store.refresh()
-                } catch {
-                  store.error = error.localizedDescription
-                  await store.refresh()
-                }
-              }
-            }
-            Button("Reauthenticate / add accounts") { prepare(c.id) }
-            Button("Disconnect", role: .destructive) { disconnecting = c }
+            Button("Check for updates") { perform("/plaid/\(c.id)/sync", body: [:]) }
+              .disabled(locked || configuration?.flag("workerReady") != true)
+            Button("Reauthenticate / add accounts") { prepare(c.id, product: c.text("product")) }
+              .disabled(locked || configuration?.flag("workerReady") != true)
+            Button("Disconnect", role: .destructive) {
+              disconnecting = c
+              remove = false
+              confirm = ""
+            }.disabled(locked)
           }
         }
       }
       if let c = disconnecting {
         Section("Disconnect \(c.text("institution_name"))") {
           Text("Future access stops. Imported data is retained unless you choose deletion.")
-          Toggle("Also delete imported data", isOn: $remove)
-          if remove { TextField("Type DELETE", text: $confirm) }
+          Toggle("Also delete imported data", isOn: $remove).disabled(locked)
+          if remove { TextField("Type DELETE", text: $confirm).disabled(locked) }
           Button("Confirm disconnect", role: .destructive) {
-            Task {
-              do {
-                _ = try await store.request(
-                  "/plaid/\(c.id)/disconnect", body: ["deleteData": remove, "confirm": confirm])
-                await store.refresh()
-                disconnecting = nil
-                remove = false
-                confirm = ""
-              } catch { store.error = error.localizedDescription }
+            perform("/plaid/\(c.id)/disconnect", body: ["deleteData": remove, "confirm": confirm]) {
+              disconnecting = nil
+              remove = false
+              confirm = ""
             }
-          }.disabled(remove && confirm != "DELETE")
+          }.disabled(locked || (remove && confirm != "DELETE"))
+          Button("Cancel") { disconnecting = nil }.disabled(locked)
         }
       }
-    }.assetTitle("Connections").sheet(isPresented: $presenting) { session?.sheet() }
+    }
+    .assetTitle("Connections")
+    .sheet(
+      isPresented: $presenting,
+      onDismiss: {
+        let dismissed = presentedAttempt
+        presentedAttempt = nil
+        if dismissed == lifecycle.attempt?.id, !lifecycle.consumed { cancelLink() }
+      }
+    ) {
+      session?.sheet().interactiveDismissDisabled()
+    }
+    .task(id: store.workspaceGeneration) { await loadConfiguration() }
+    .onChange(of: store.workspaceGeneration) { _, _ in
+      cancelLink()
+      configuration = nil
+      configurationLoading = false
+      configurationLoadID = nil
+      configurationError = ""
+      clientID = ""
+      secret = ""
+      disconnecting = nil
+    }
+    .onDisappear {
+      cancelLink()
+      configurationLoadID = nil
+      configurationLoading = false
+      clientID = ""
+      secret = ""
+    }
   }
-  func prepare(_ id: String? = nil) {
-    loading = true
-    ready = false
-    updating = id
-    Task {
-      do {
-        var p: JSON = ["product": product]
-        if let id { p["connectionId"] = id }
-        let r = try await store.request("/plaid/link-token", body: p)
-        guard let token = r["link_token"] as? String else {
-          throw failure("Link token unavailable")
+
+  private var credentialsSection: some View {
+    Section("Your Plaid credentials") {
+      if configurationLoading {
+        Text("Loading configuration…").foregroundStyle(Color.assetSecondary)
+      } else if !configurationError.isEmpty {
+        Text(configurationError).foregroundStyle(Color.assetAmber)
+        Button("Try again") { Task { await loadConfiguration() } }.disabled(locked)
+      } else if let configuration {
+        if configuration.flag("configured") {
+          LabeledContent("Client ID", value: "•••• " + configuration.text("clientIdLast4"))
         }
-        let configuration = LinkTokenConfiguration(
+        if !storageReady {
+          Text("Secure credential storage is not available on this server yet.")
+            .foregroundStyle(Color.assetSecondary)
+        }
+        if !configuration.text("redirectUri").isEmpty {
+          VStack(alignment: .leading, spacing: 8) {
+            Text("Plaid redirect URI")
+            Text(configuration.text("redirectUri")).textSelection(.enabled)
+              .font(.custom("Lato-Regular", size: 13, relativeTo: .caption))
+            Text("Add this URL to Allowed redirect URIs in your Plaid Dashboard.")
+              .font(.custom("Lato-Regular", size: 13, relativeTo: .caption))
+              .foregroundStyle(Color.assetSecondary)
+          }
+        }
+        Picker("Environment", selection: $environment) {
+          ForEach(environments, id: \.self) { value in
+            Text(value.capitalized).tag(value)
+          }
+        }.disabled(locked || activeConnections || !storageReady)
+        TextField("Client ID", text: $clientID)
+          .textInputAutocapitalization(.never).autocorrectionDisabled()
+          .disabled(locked || !storageReady)
+        SecureField("Sandbox secret", text: $secret)
+          .textInputAutocapitalization(.never).autocorrectionDisabled()
+          .disabled(locked || !storageReady)
+        Button(configuration.flag("configured") ? "Update credentials" : "Save credentials") {
+          let payload: JSON = [
+            "clientId": clientID.trimmingCharacters(in: .whitespacesAndNewlines),
+            "secret": secret.trimmingCharacters(in: .whitespacesAndNewlines),
+            "environment": environment,
+          ]
+          secret = ""
+          perform("/plaid/config", body: payload, method: "PUT", reloadConfiguration: true) {
+            clientID = ""
+          }
+        }.disabled(
+          locked || !storageReady
+            || clientID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || secret.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        if configuration.flag("configured") {
+          Button("Remove credentials", role: .destructive) {
+            secret = ""
+            perform("/plaid/config", method: "DELETE", reloadConfiguration: true) {
+              clientID = ""
+            }
+          }.disabled(locked || activeConnections)
+        }
+        Text(
+          activeConnections
+            ? "To rotate your secret, enter the same full Client ID and the new secret. Disconnect your institutions before changing your Plaid account or environment, or removing credentials."
+            : "Your server validates and encrypts these credentials. The secret is never saved on this device."
+        ).font(.custom("Lato-Regular", size: 13, relativeTo: .caption))
+          .foregroundStyle(Color.assetSecondary)
+      }
+    }
+  }
+
+  private func workspace() -> Workspace? {
+    guard remote, let token = SessionKey.read() else { return nil }
+    return Workspace(generation: store.workspaceGeneration, server: store.baseURL, token: token)
+  }
+
+  private func current(_ workspace: Workspace) -> Bool {
+    remote && workspace.generation == store.workspaceGeneration && workspace.server == store.baseURL
+      && workspace.token == SessionKey.read()
+  }
+
+  private func current(_ attempt: PlaidLinkAttempt) -> Bool {
+    lifecycle.attempt?.id == attempt.id && remote
+      && attempt.workspaceGeneration == store.workspaceGeneration && attempt.server == store.baseURL
+      && attempt.token == SessionKey.read()
+  }
+
+  private func loadConfiguration() async {
+    guard let workspace = workspace() else { return }
+    let id = UUID()
+    configurationLoadID = id
+    configurationLoading = true
+    configurationError = ""
+    defer {
+      if configurationLoadID == id {
+        configurationLoading = false
+        configurationLoadID = nil
+      }
+    }
+    do {
+      let result = try await store.request(
+        "/plaid/config", server: workspace.server, token: workspace.token)
+      try Task.checkCancellation()
+      guard current(workspace), configurationLoadID == id else { return }
+      configuration = Row(result)
+      let supported = result["supportedEnvironments"] as? [String] ?? ["sandbox"]
+      let saved = result["environment"] as? String ?? "sandbox"
+      environment = supported.contains(saved) ? saved : (supported.first ?? "sandbox")
+    } catch is CancellationError {
+    } catch {
+      guard current(workspace), configurationLoadID == id, !Task.isCancelled else { return }
+      configurationError = error.localizedDescription
+    }
+  }
+
+  private func perform(
+    _ path: String, body: JSON? = nil, method: String? = nil, reloadConfiguration: Bool = false,
+    onSuccess: @escaping () -> Void = {}
+  ) {
+    guard !locked, let workspace = workspace() else { return }
+    working = true
+    let id = UUID()
+    operationID = id
+    operation = Task { @MainActor in
+      defer {
+        if operationID == id {
+          working = false
+          operationID = nil
+        }
+      }
+      do {
+        try Task.checkCancellation()
+        guard current(workspace) else { return }
+        _ = try await store.request(
+          path, body: body, server: workspace.server, token: workspace.token, method: method)
+        try Task.checkCancellation()
+        guard current(workspace) else { return }
+        onSuccess()
+      } catch is CancellationError {
+        return
+      } catch {
+        guard current(workspace), !Task.isCancelled else { return }
+        store.error = error.localizedDescription
+      }
+      guard current(workspace), !Task.isCancelled else { return }
+      if reloadConfiguration { await loadConfiguration() }
+      await store.refresh()
+    }
+  }
+
+  private func cancelLink() {
+    operation?.cancel()
+    operation = nil
+    operationID = nil
+    if let attempt = lifecycle.attempt { lifecycle.finish(attempt.id) }
+    session = nil
+    presenting = false
+    working = false
+  }
+
+  private func prepare(_ id: String? = nil, product selectedProduct: String? = nil) {
+    guard !locked, let workspace = workspace() else { return }
+    let attempt = PlaidLinkAttempt(
+      product: selectedProduct ?? product, connectionID: id,
+      workspaceGeneration: workspace.generation, server: workspace.server, token: workspace.token)
+    guard lifecycle.begin(attempt) else { return }
+    operation = Task { @MainActor in
+      do {
+        var payload: JSON = ["product": attempt.product]
+        if let id = attempt.connectionID { payload["connectionId"] = id }
+        let response = try await store.request(
+          "/plaid/link-token", body: payload, server: attempt.server, token: attempt.token)
+        try Task.checkCancellation()
+        guard current(attempt) else { return }
+        guard let token = response["link_token"] as? String, !token.isEmpty else {
+          throw failure("Link token unavailable. Please try again.")
+        }
+        let config = LinkTokenConfiguration(
           token: token,
           onSuccess: { success in
             Task { @MainActor in
+              guard current(attempt), lifecycle.consume(attempt.id) else { return }
               presenting = false
-              do {
-                let selected = success.metadata.accounts.map(\.id)
-                if let updating {
-                  _ = try await store.request(
-                    "/plaid/\(updating)/update-complete", body: ["selected": selected])
-                } else {
-                  _ = try await store.request(
-                    "/plaid/exchange",
-                    body: [
-                      "publicToken": success.publicToken, "product": product, "selected": selected,
-                    ])
-                }
-                ready = false
-                session = nil
-                await store.refresh()
-              } catch { store.error = error.localizedDescription }
+              session = nil
+              complete(
+                attempt, publicToken: success.publicToken,
+                selected: success.metadata.accounts.map(\.id))
             }
           },
           onExit: { exit in
             Task { @MainActor in
+              guard current(attempt), !lifecycle.consumed else { return }
+              lifecycle.finish(attempt.id)
               presenting = false
-              ready = false
               session = nil
-              if let error = exit.error { store.error = error.localizedDescription }
+              if let error = exit.error {
+                let display = error.displayMessage?.trimmingCharacters(in: .whitespacesAndNewlines)
+                if let display, !display.isEmpty {
+                  store.error = display
+                } else {
+                  store.error = "Bank connection could not be completed. Please try again."
+                }
+              }
             }
-          }, onEvent: nil, onLoad: { Task { @MainActor in ready = true } })
-        session = try Plaid.createPlaidLinkSession(configuration: configuration)
-      } catch { store.error = error.localizedDescription }
-      loading = false
+          }, onEvent: nil,
+          onLoad: {
+            Task { @MainActor in
+              guard current(attempt) else { return }
+              _ = lifecycle.loaded(attempt.id)
+            }
+          })
+        session = try Plaid.createPlaidLinkSession(configuration: config)
+      } catch is CancellationError {
+        if current(attempt) { lifecycle.finish(attempt.id) }
+      } catch {
+        guard current(attempt) else { return }
+        lifecycle.finish(attempt.id)
+        session = nil
+        store.error = error.localizedDescription
+      }
+    }
+  }
+
+  private func complete(_ attempt: PlaidLinkAttempt, publicToken: String, selected: [String]) {
+    operation = Task { @MainActor in
+      defer { lifecycle.finish(attempt.id) }
+      do {
+        try Task.checkCancellation()
+        guard current(attempt) else { return }
+        if let id = attempt.connectionID {
+          _ = try await store.request(
+            "/plaid/\(id)/update-complete", body: ["selected": selected],
+            server: attempt.server, token: attempt.token)
+        } else {
+          _ = try await store.request(
+            "/plaid/exchange",
+            body: ["publicToken": publicToken, "product": attempt.product, "selected": selected],
+            server: attempt.server, token: attempt.token)
+        }
+        try Task.checkCancellation()
+      } catch is CancellationError {
+        return
+      } catch {
+        guard current(attempt) else { return }
+        store.error = error.localizedDescription
+      }
+      if current(attempt), !Task.isCancelled { await store.refresh() }
     }
   }
 }

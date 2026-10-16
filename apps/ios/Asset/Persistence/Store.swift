@@ -139,6 +139,68 @@ enum GoogleSignIn {
   }
 }
 
+struct PlaidLinkAttempt: Equatable {
+  let id = UUID()
+  let product: String
+  let connectionID: String?
+  let workspaceGeneration: Int
+  let server: String
+  let token: String
+}
+
+struct PlaidLinkLifecycle {
+  private(set) var attempt: PlaidLinkAttempt?
+  private(set) var ready = false
+  private(set) var consumed = false
+  var active: Bool { attempt != nil }
+
+  mutating func begin(_ next: PlaidLinkAttempt) -> Bool {
+    guard attempt == nil else { return false }
+    attempt = next
+    return true
+  }
+
+  mutating func loaded(_ id: UUID) -> Bool {
+    guard attempt?.id == id, !consumed else { return false }
+    ready = true
+    return true
+  }
+
+  mutating func consume(_ id: UUID) -> Bool {
+    guard attempt?.id == id, !consumed else { return false }
+    consumed = true
+    ready = false
+    return true
+  }
+
+  @discardableResult mutating func finish(_ id: UUID) -> Bool {
+    guard attempt?.id == id else { return false }
+    self = PlaidLinkLifecycle()
+    return true
+  }
+}
+
+enum APIRequest {
+  static func make(
+    _ path: String, body: JSON? = nil, server: String, token: String?, method: String? = nil
+  ) throws -> URLRequest {
+    guard let root = URL(string: server), let scheme = root.scheme,
+      scheme == "https"
+        || (scheme == "http" && ["localhost", "127.0.0.1"].contains(root.host ?? "")),
+      let url = URL(string: server + "/api" + path)
+    else { throw failure("Use an HTTPS server, or localhost in the simulator") }
+    var request = URLRequest(url: url)
+    request.httpMethod = method ?? (body == nil ? "GET" : "POST")
+    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    request.setValue("ios", forHTTPHeaderField: "x-asset-client")
+    if !["/auth/google/start", "/auth/google/exchange"].contains(path), let token {
+      request.setValue("Bearer " + token, forHTTPHeaderField: "Authorization")
+    }
+    if let body { request.httpBody = try JSONSerialization.data(withJSONObject: body) }
+    return request
+  }
+}
+
 @MainActor final class Engine {
   private let context = JSContext()!
   private var exception: String?
@@ -335,24 +397,12 @@ enum SessionKey {
     (try engine.call("parseMoney", [text]) as? NSNumber)?.intValue ?? 0
   }
   func request(
-    _ path: String, body: JSON? = nil, server: String? = nil, token: String? = nil
+    _ path: String, body: JSON? = nil, server: String? = nil, token: String? = nil,
+    method: String? = nil
   ) async throws -> JSON {
-    let address = server ?? baseURL
-    guard let root = URL(string: address), let scheme = root.scheme,
-      scheme == "https"
-        || (scheme == "http" && ["localhost", "127.0.0.1"].contains(root.host ?? "")),
-      let url = URL(string: address + "/api" + path)
-    else { throw failure("Use an HTTPS server, or localhost in the simulator") }
-    var req = URLRequest(url: url)
-    req.httpMethod = body == nil ? "GET" : "POST"
-    req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-    req.setValue("ios", forHTTPHeaderField: "x-asset-client")
-    if !["/auth/google/start", "/auth/google/exchange"].contains(path),
-      let credential = token ?? SessionKey.read()
-    {
-      req.setValue("Bearer " + credential, forHTTPHeaderField: "Authorization")
-    }
-    if let body { req.httpBody = try JSONSerialization.data(withJSONObject: body) }
+    let req = try APIRequest.make(
+      path, body: body, server: server ?? baseURL, token: token ?? SessionKey.read(), method: method
+    )
     let (data, response) = try await session.data(for: req)
     let result = try JSONSerialization.jsonObject(with: data) as? JSON ?? [:]
     guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {

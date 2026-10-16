@@ -3,11 +3,11 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { openDatabase } from './db.js';
 import { createApp } from './app.js';
-import { PlaidSandbox, processJob } from './plaid.js';
+import { enqueueStaleSyncs, processJob } from './plaid.js';
+import { userPlaidProvider } from './plaid-credentials.js';
 const root = fileURLToPath(new URL('..', import.meta.url));
 const db = await openDatabase(),
-  provider = new PlaidSandbox(),
-  app = createApp(db, provider);
+  app = createApp(db);
 if (process.env.NODE_ENV === 'production') {
   app.use(express.static(path.join(root, 'dist')));
   app.get('/{*path}', (_req, res) => res.sendFile(path.join(root, 'dist/index.html')));
@@ -17,11 +17,16 @@ if (process.env.NODE_ENV === 'production') {
   app.use(vite.middlewares);
 }
 let processing = false;
+let lastSweep = 0;
 const interval = setInterval(async () => {
   if (processing) return;
   processing = true;
   try {
-    await processJob(db, provider);
+    if (Date.now() - lastSweep >= 60000) {
+      await enqueueStaleSyncs(db);
+      lastSweep = Date.now();
+    }
+    await processJob(db, (owner) => userPlaidProvider(db, owner));
   } catch {
     /* Persisted jobs retry without logging financial/provider payloads. */
   } finally {

@@ -334,7 +334,7 @@ describe('durable database and authenticated API', () => {
     await syncConnection(db, fake, 'c', 'owner');
     expect((await getState(db, 'owner')).state.transactions).toHaveLength(1);
   });
-  it('deduplicates webhook jobs and keeps completion flags monotonic out of order', async () => {
+  it('coalesces pending webhook work and keeps completion flags monotonic out of order', async () => {
     const event = Buffer.from(
       JSON.stringify({
         item_id: 'item',
@@ -356,13 +356,13 @@ describe('durable database and authenticated API', () => {
         }),
       ),
     );
-    expect((await db.query('SELECT * FROM webhook_jobs')).rows).toHaveLength(2);
+    expect((await db.query('SELECT * FROM sync_jobs')).rows).toHaveLength(1);
     expect(
       (await db.query('SELECT historical_complete FROM connections WHERE id=$1', ['c'])).rows[0]
         .historical_complete,
     ).toBe(true);
     await processJob(db, fake);
-    expect((await db.query("SELECT * FROM webhook_jobs WHERE status='done'")).rows).toHaveLength(1);
+    expect((await db.query("SELECT * FROM sync_jobs WHERE status='done'")).rows).toHaveLength(1);
   });
   it('requests 730 history days and updates existing Items without adding products', async () => {
     const fresh: any = await createLinkToken(db, fake, 'owner', 'transactions');
@@ -524,7 +524,7 @@ describe('durable database and authenticated API', () => {
       ),
     );
     expect(
-      (await db.query('SELECT * FROM webhook_jobs WHERE connection_id=$1', ['inv'])).rows,
+      (await db.query('SELECT * FROM sync_jobs WHERE connection_id=$1', ['inv'])).rows,
     ).toHaveLength(1);
   });
   it('disconnects access without deleting imported data by default', async () => {

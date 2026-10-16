@@ -40,13 +40,13 @@ Native build and regression instructions are in [the iOS README](../ios/README.m
 
 ## Hosting
 
-The current complete deployment runs as a persistent Node service. From the repository root, its Docker build context is the web app:
+The app supports Vercel with hosted PostgreSQL, or a persistent Node service. For the latter, the Docker build context is the web app:
 
 ```sh
 docker build -t asset-web apps/web
 ```
 
-The image serves port 4317 and defaults to storing data under `/app/data/postgres`. Attach persistent storage at `/app/data`, or supply a dedicated PostgreSQL `DATABASE_URL`. Set `APP_ORIGIN` to the public HTTPS origin and provide provider credentials through the host's secret configuration. See [deployment requirements](../../docs/PLAID.md#hosting-requirements) before exposing a public service.
+The image serves port 4317 and defaults to storing data under `/app/data/postgres`. Attach persistent storage at `/app/data`, or supply a dedicated PostgreSQL `DATABASE_URL`. Set `APP_ORIGIN` to the public HTTPS origin and provide the encryption key through the host's secret configuration; each user adds their own Plaid credentials in Connections. See [deployment requirements](../../docs/PLAID.md#hosting-requirements) before exposing a public service.
 
 ## Vercel and Supabase
 
@@ -78,6 +78,20 @@ Manual accounts, CSV imports, and the synthetic demo need no Plaid credentials. 
 
 ### Bank synchronization
 
-The Vercel function does not run the continuous worker in `server/index.ts`. Keep `PLAID_WORKER_ENABLED=false` and leave bank credentials unset for the initial deployment. A persistent instance of the Node service can process the durable job queue against the same PostgreSQL database; only enable bank connections once that service, webhook delivery, and retry behavior have been verified. This release remains Plaid Sandbox-only.
+Each user adds their own Plaid Client ID and Sandbox secret in **Connections**. The server validates and encrypts these separately from financial state; it never returns the saved secret. Do not configure shared `PLAID_CLIENT_ID` or `PLAID_SECRET` values in Vercel.
 
-See [Vercel's Node function documentation](https://vercel.com/docs/functions/runtimes/node-js), [Supabase connection guidance](https://supabase.com/docs/guides/database/connecting-to-postgres), and [Google OpenID Connect setup](https://developers.google.com/identity/openid-connect/openid-connect).
+Configure these server variables, then redeploy:
+
+| Variable | Value |
+| --- | --- |
+| `TOKEN_ENCRYPTION_KEY` | An independent random 32-byte key, encoded as 64 hexadecimal characters. Preserve it for all existing ciphertext. |
+| `CRON_SECRET` | A separate random secret of at least 32 characters. Vercel sends it as the worker's bearer credential. |
+| `PLAID_WORKER_ENABLED` | `true` after the worker configuration is ready. |
+| `PLAID_WEB_REDIRECT_URI` | `https://asset.gtfol.dev/plaid/oauth` |
+| `PLAID_WEBHOOK_URL` | `https://asset.gtfol.dev/api/plaid/webhook` |
+
+`vercel.json` schedules `/api/internal/plaid-worker` every minute. This schedule requires a Vercel plan that supports minute-level cron; the existing gtfol project uses Pro. The function has a 60-second limit, and the worker reserves time to checkpoint before it expires. Transactions and investment pages resume from durable staging across invocations. A lease prevents overlapping workers from committing the same job, and periodic reconciliation recovers missed notifications. No separate worker service is needed for this deployment. A persistent Node deployment continues to use its local interval against the same queue.
+
+Each user must add the displayed web redirect URL to their own Plaid Dashboard before using bank OAuth. Native OAuth needs the additional signing and Universal Link configuration in [Plaid setup](../../docs/PLAID.md#native-link-and-oauth). This release remains Sandbox-only; real-bank access is not enabled.
+
+See [Vercel's Node function documentation](https://vercel.com/docs/functions/runtimes/node-js), [cron limits](https://vercel.com/docs/cron-jobs/usage-and-pricing), [Supabase connection guidance](https://supabase.com/docs/guides/database/connecting-to-postgres), and [Google OpenID Connect setup](https://developers.google.com/identity/openid-connect/openid-connect).

@@ -1,5 +1,5 @@
 import express from 'express';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
 import { applyCommand, backup, validateState, type Command } from '../shared/core.js';
 import { createDemo } from '../shared/demo.js';
@@ -12,7 +12,11 @@ import {
   exchangeLink,
   listConnections,
   ownedConnection,
-  syncConnection,
+  enqueueSync,
+  enqueueStaleSyncs,
+  invalidateSync,
+  processJob,
+  withPlaidDeadline,
   verifyWebhook,
   enqueueWebhook,
   disconnect,
@@ -21,11 +25,21 @@ import {
 } from './plaid.js';
 import { acceptedOrigins, jsonBodyLimit } from './hosting.js';
 import { googleRoutes, GoogleOAuth, type GoogleProvider } from './google.js';
+import {
+  plaidConfiguration,
+  plaidWorkerReady,
+  removePlaidCredentials,
+  savePlaidCredentials,
+  userPlaidProvider,
+} from './plaid-credentials.js';
 export function createApp(
   db: Database,
-  provider: PlaidProvider = new PlaidSandbox(),
+  provider?: PlaidProvider,
   google: GoogleProvider = new GoogleOAuth(),
 ) {
+  const resolveProvider = async (owner: string) => provider ?? userPlaidProvider(db, owner);
+  const requestProvider = async (owner: string) =>
+    withPlaidDeadline(await resolveProvider(owner), Date.now() + 40000);
   const app = express();
   app.disable('x-powered-by');
   if (process.env.VERCEL === '1') app.set('trust proxy', 1);
@@ -37,14 +51,65 @@ export function createApp(
     if (req.path.startsWith('/api/')) res.setHeader('Cache-Control', 'no-store');
     next();
   });
+  app.get('/api/internal/plaid-worker', async (req, res) => {
+    const expected = process.env.CRON_SECRET ?? '';
+    const supplied = req.header('authorization') ?? '';
+    const authorization = Buffer.from(`Bearer ${expected}`);
+    const suppliedBytes = Buffer.from(supplied);
+    if (
+      expected.length < 32 ||
+      suppliedBytes.length !== authorization.length ||
+      !timingSafeEqual(suppliedBytes, authorization)
+    ) {
+      res.status(401).json({ error: 'Unauthorized' });
+      return;
+    }
+    const deadline = Date.now() + 45000;
+    let processed = 0;
+    await enqueueStaleSyncs(db);
+    while (
+      Date.now() < deadline - 3000 &&
+      processed < 20 &&
+      (await processJob(db, resolveProvider, { deadline }))
+    )
+      processed++;
+    res.json({ ok: true, processed });
+  });
   app.post(
     '/api/plaid/webhook',
     express.raw({ type: 'application/json', limit: '1mb' }),
     async (req, res) => {
-      if (
-        !Buffer.isBuffer(req.body) ||
-        !(await verifyWebhook(provider, req.body, req.header('plaid-verification') ?? ''))
-      ) {
+      if (!Buffer.isBuffer(req.body)) {
+        res.status(400).json({ error: 'Invalid webhook body' });
+        return;
+      }
+      let verifier = provider;
+      if (!verifier) {
+        let item: unknown;
+        try {
+          item = JSON.parse(req.body.toString('utf8')).item_id;
+        } catch {
+          res.status(400).json({ error: 'Invalid webhook body' });
+          return;
+        }
+        if (typeof item !== 'string' || item.length > 256) {
+          res.status(202).json({ accepted: true });
+          return;
+        }
+        const connection = (
+          await db.query<{ owner_id: string }>(
+            "SELECT owner_id FROM connections WHERE item_id=$1 AND status<>'disconnected'",
+            [item],
+          )
+        ).rows[0];
+        // Unknown Items have no configured owner and cannot affect a workspace.
+        if (!connection) {
+          res.status(202).json({ accepted: true });
+          return;
+        }
+        verifier = await requestProvider(connection.owner_id);
+      }
+      if (!(await verifyWebhook(verifier, req.body, req.header('plaid-verification') ?? ''))) {
         res.status(401).json({ error: 'Invalid webhook' });
         return;
       }
@@ -112,18 +177,16 @@ export function createApp(
     res.clearCookie('asset_session', { path: '/' });
     res.json({ ok: true });
   });
-  app.get('/api/state', async (_req, res) =>
+  app.get('/api/state', async (req, res) => {
+    // A missing encryption key must not make manual financial records inaccessible.
+    const configuration = await plaidConfiguration(db, res.locals.owner).catch(() => null);
     res.json({
       ...(await getState(db, res.locals.owner)),
+      sessionId: tokenHash('plaid-context:' + (readToken(req) ?? '')),
       connections: await listConnections(db, res.locals.owner),
-      plaidConfigured: !!(
-        process.env.PLAID_CLIENT_ID &&
-        process.env.PLAID_SECRET &&
-        process.env.TOKEN_ENCRYPTION_KEY &&
-        (process.env.VERCEL !== '1' || process.env.PLAID_WORKER_ENABLED === 'true')
-      ),
-    }),
-  );
+      plaidConfigured: !!configuration?.configured && configuration.workerReady,
+    });
+  });
   app.post('/api/command', async (req, res) => {
     const c = z
       .object({
@@ -155,8 +218,66 @@ export function createApp(
     res.setHeader('Content-Disposition', 'attachment; filename="asset-backup.json"');
     res.json(backup(state));
   });
+  app.use('/api/plaid', (req, res, next) => {
+    const expectedSession = req.header('x-asset-session');
+    if (
+      expectedSession !== undefined &&
+      expectedSession !== tokenHash('plaid-context:' + (readToken(req) ?? ''))
+    ) {
+      res
+        .status(409)
+        .json({ error: 'Your sign-in changed. Reload Asset before managing connections.' });
+      return;
+    }
+    next();
+  });
+  const clientPlatform = (req: express.Request) =>
+    req.header('x-asset-client') === 'ios' ? 'ios' : 'web';
+  app.get('/api/plaid/config', async (req, res) => {
+    res.json(await plaidConfiguration(db, res.locals.owner, clientPlatform(req)));
+  });
+  app.put('/api/plaid/config', async (req, res) => {
+    const { state } = await getState(db, res.locals.owner);
+    if (state.settings.demo) {
+      res.status(403).json({ error: 'Sign in to add your Plaid credentials.' });
+      return;
+    }
+    await savePlaidCredentials(db, res.locals.owner, req.body, async (credentials) => {
+      try {
+        await withPlaidDeadline(new PlaidSandbox(credentials), Date.now() + 15000).call(
+          '/institutions/get',
+          { country_codes: ['US'], count: 1, offset: 0 },
+        );
+      } catch {
+        throw Object.assign(
+          Error(
+            'Plaid could not verify these credentials. Check the client ID, secret, and environment, then try again.',
+          ),
+          { status: 400 },
+        );
+      }
+    });
+    res.json(await plaidConfiguration(db, res.locals.owner, clientPlatform(req)));
+  });
+  app.delete('/api/plaid/config', async (req, res) => {
+    await removePlaidCredentials(db, res.locals.owner);
+    res.json(await plaidConfiguration(db, res.locals.owner, clientPlatform(req)));
+  });
+  app.post('/api/plaid/:id/disconnect', async (req, res) => {
+    const remove = z.boolean().parse(req.body.deleteData ?? false);
+    if (remove && req.body.confirm !== 'DELETE') throw Error('Type DELETE to delete imported data');
+    res.json(
+      await disconnect(
+        db,
+        await requestProvider(res.locals.owner),
+        res.locals.owner,
+        req.params.id as string,
+        remove,
+      ),
+    );
+  });
   app.use('/api/plaid', (_req, res, next) => {
-    if (process.env.VERCEL === '1' && process.env.PLAID_WORKER_ENABLED !== 'true') {
+    if (!plaidWorkerReady()) {
       res.status(503).json({ error: 'Bank connections are not available on this deployment yet.' });
       return;
     }
@@ -175,7 +296,7 @@ export function createApp(
     res.json(
       await createLinkToken(
         db,
-        provider,
+        await requestProvider(res.locals.owner),
         res.locals.owner,
         p.product,
         p.connectionId,
@@ -195,41 +316,66 @@ export function createApp(
     if (state.settings.demo) throw Error('Demo cannot connect external data');
     const id = await exchangeLink(
       db,
-      provider,
+      await requestProvider(res.locals.owner),
       res.locals.owner,
       p.publicToken,
       p.product,
       p.selected,
     );
-    await db.query('INSERT INTO webhook_jobs(id,connection_id,payload) VALUES($1,$2,$3)', [
-      randomUUID(),
-      id,
-      '{}',
-    ]);
-    res.json({ id, status: 'initial_loading' });
+    res.status(202).json({ id, status: 'initial_loading' });
   });
   app.post('/api/plaid/:id/update-complete', async (req, res) => {
     const selected = z.array(z.string()).min(1).parse(req.body.selected);
     const c = await ownedConnection(db, req.params.id as string, res.locals.owner);
     if (c.status === 'disconnected') throw Error('Connection is disconnected');
-    const metadata = await provider.call('/accounts/get', {
+    const metadata = await (
+      await requestProvider(res.locals.owner)
+    ).call('/accounts/get', {
       access_token: decryptToken(c.encrypted_token),
     });
     if (selected.some((id) => !metadata.accounts.some((a: any) => a.account_id === id)))
       throw Error('Unknown account selection');
-    await db.query(
-      'UPDATE connections SET selected_accounts=$1,cursor=NULL WHERE id=$2 AND owner_id=$3',
-      [JSON.stringify(selected), c.id, res.locals.owner],
-    );
-    res.json(await syncConnection(db, provider, c.id, res.locals.owner));
+    await mutateState(db, res.locals.owner, async (state, tx) => {
+      await tx.query('SELECT id FROM connections WHERE id=$1 AND owner_id=$2 FOR UPDATE', [
+        c.id,
+        res.locals.owner,
+      ]);
+      const current = await ownedConnection(tx, c.id, res.locals.owner);
+      if (current.status === 'disconnected') throw Error('Connection is disconnected');
+      if (current.item_id !== c.item_id || current.encrypted_token !== c.encrypted_token)
+        throw Object.assign(Error('This connection changed. Reload Asset and try again.'), {
+          status: 409,
+        });
+      await tx.query(
+        "UPDATE connections SET selected_accounts=$1,cursor=NULL,status='initial_loading',error_code=NULL WHERE id=$2 AND owner_id=$3",
+        [JSON.stringify(selected), c.id, res.locals.owner],
+      );
+      await invalidateSync(tx, c.id);
+      await enqueueSync(tx, c.id);
+      return state;
+    });
+    res.status(202).json({ status: 'queued' });
   });
   app.post('/api/plaid/:id/sync', async (req, res) => {
-    res.json(await syncConnection(db, provider, req.params.id as string, res.locals.owner));
+    const connection = await ownedConnection(db, req.params.id as string, res.locals.owner);
+    if (connection.status === 'disconnected') throw Error('Connection is disconnected');
+    await enqueueSync(db, connection.id);
+    res.status(202).json({ status: 'queued' });
   });
   app.post('/api/plaid/:id/accounts', async (req, res) => {
     const selected = z.array(z.string()).parse(req.body.selected);
     const c = await ownedConnection(db, req.params.id as string, res.locals.owner);
     await mutateState(db, res.locals.owner, async (s, tx) => {
+      await tx.query('SELECT id FROM connections WHERE id=$1 AND owner_id=$2 FOR UPDATE', [
+        c.id,
+        res.locals.owner,
+      ]);
+      const current = await ownedConnection(tx, c.id, res.locals.owner);
+      if (current.status === 'disconnected') throw Error('Connection is disconnected');
+      if (current.item_id !== c.item_id || current.encrypted_token !== c.encrypted_token)
+        throw Object.assign(Error('This connection changed. Reload Asset and try again.'), {
+          status: 409,
+        });
       const accounts = s.accounts.filter((a) => a.connectionId === c.id);
       if (selected.some((id) => !accounts.some((a) => a.providerId === id)))
         throw Error('Unknown account selection');
@@ -239,14 +385,11 @@ export function createApp(
         c.id,
         res.locals.owner,
       ]);
+      await invalidateSync(tx, c.id);
+      await enqueueSync(tx, c.id);
       return s;
     });
     res.json({ ok: true });
-  });
-  app.post('/api/plaid/:id/disconnect', async (req, res) => {
-    const remove = z.boolean().parse(req.body.deleteData ?? false);
-    if (remove && req.body.confirm !== 'DELETE') throw Error('Type DELETE to delete imported data');
-    res.json(await disconnect(db, provider, res.locals.owner, req.params.id as string, remove));
   });
   app.use('/api', (_req, res) => {
     res.status(404).json({ error: 'Not found' });

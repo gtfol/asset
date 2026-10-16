@@ -8,6 +8,7 @@ import {
 } from 'node:crypto';
 import { decodeProtectedHeader, importJWK, jwtVerify, type JWK } from 'jose';
 import { mutateState, type Database, type SQL } from './db.js';
+import { acceptedOrigins } from './hosting.js';
 import {
   applyRules,
   fingerprint,
@@ -26,43 +27,92 @@ export class PlaidError extends Error {
   }
 }
 export interface PlaidProvider {
-  call<T = any>(path: string, body: Record<string, unknown>): Promise<T>;
+  assertCurrent?(tx: SQL, owner: string): Promise<void>;
+  call<T = any>(
+    path: string,
+    body: Record<string, unknown>,
+    options?: { deadline?: number },
+  ): Promise<T>;
 }
 export class PlaidSandbox implements PlaidProvider {
-  async call<T>(path: string, body: Record<string, unknown>): Promise<T> {
-    if ((process.env.PLAID_ENV ?? 'sandbox') !== 'sandbox')
+  constructor(
+    private credentials?: { clientId: string; secret: string; environment?: 'sandbox' },
+  ) {}
+  async call<T>(
+    path: string,
+    body: Record<string, unknown>,
+    options: { deadline?: number } = {},
+  ): Promise<T> {
+    if ((this.credentials?.environment ?? process.env.PLAID_ENV ?? 'sandbox') !== 'sandbox')
       throw new PlaidError('PRODUCTION_BLOCKED');
-    if (!process.env.PLAID_CLIENT_ID || !process.env.PLAID_SECRET)
-      throw new PlaidError('SANDBOX_NOT_CONFIGURED');
-    for (let n = 0; n < 4; n++) {
+    const clientId = this.credentials?.clientId ?? process.env.PLAID_CLIENT_ID;
+    const secret = this.credentials?.secret ?? process.env.PLAID_SECRET;
+    if (!clientId || !secret) throw new PlaidError('SANDBOX_NOT_CONFIGURED');
+    const deadline = options.deadline ?? Date.now() + 20000;
+    const attempts = [
+      '/accounts/get',
+      '/transactions/sync',
+      '/investments/holdings/get',
+      '/investments/transactions/get',
+      '/item/get',
+      '/institutions/get_by_id',
+      '/webhook_verification_key/get',
+    ].includes(path)
+      ? 2
+      : 1;
+    for (let attempt = 0; attempt < attempts; attempt++) {
+      const remaining = deadline - Date.now();
+      if (remaining <= 500) throw new PlaidError('SYNC_DEADLINE');
       try {
         const response = await fetch('https://sandbox.plaid.com' + path, {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({
-            client_id: process.env.PLAID_CLIENT_ID,
-            secret: process.env.PLAID_SECRET,
-            ...body,
-          }),
-          signal: AbortSignal.timeout(25000),
+          body: JSON.stringify({ ...body, client_id: clientId, secret }),
+          signal: AbortSignal.timeout(Math.max(1, Math.min(10000, remaining - 250))),
         });
         const result = (await response.json()) as any;
         if (!response.ok) {
           const code = result.error_code ?? 'PROVIDER_ERROR';
-          if ((response.status === 429 || response.status >= 500) && n < 3) {
-            await new Promise((r) => setTimeout(r, 250 * 2 ** n));
+          if ((response.status === 429 || response.status >= 500) && attempt + 1 < attempts) {
+            await new Promise((resolve) => setTimeout(resolve, 250));
             continue;
           }
           throw new PlaidError(code);
         }
         return result as T;
-      } catch (e) {
-        if (e instanceof PlaidError || n === 3) throw e;
-        await new Promise((r) => setTimeout(r, 250 * 2 ** n));
+      } catch (error) {
+        if (error instanceof PlaidError) throw error;
+        if (attempt + 1 >= attempts) throw new PlaidError('PROVIDER_UNAVAILABLE');
       }
+      if (deadline - Date.now() > 500) await new Promise((resolve) => setTimeout(resolve, 250));
     }
     throw new PlaidError('PROVIDER_UNAVAILABLE');
   }
+}
+
+const deadlineSources = new WeakMap<PlaidProvider, PlaidProvider>();
+export function withPlaidDeadline(provider: PlaidProvider, deadline: number): PlaidProvider {
+  const bounded: PlaidProvider = {
+    ...(provider.assertCurrent ? { assertCurrent: provider.assertCurrent.bind(provider) } : {}),
+    async call<T>(path: string, body: Record<string, unknown>, options = {}) {
+      const limit = Math.min(deadline, (options as { deadline?: number }).deadline ?? deadline);
+      const remaining = limit - Date.now();
+      if (remaining <= 0) throw new PlaidError('SYNC_DEADLINE');
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        return await Promise.race([
+          provider.call<T>(path, body, { deadline: limit }),
+          new Promise<never>((_, reject) => {
+            timer = setTimeout(() => reject(new PlaidError('SYNC_DEADLINE')), remaining);
+          }),
+        ]);
+      } finally {
+        clearTimeout(timer);
+      }
+    },
+  };
+  deadlineSources.set(bounded, deadlineSources.get(provider) ?? provider);
+  return bounded;
 }
 function encryptionKey() {
   const value = process.env.TOKEN_ENCRYPTION_KEY ?? '';
@@ -129,9 +179,20 @@ export async function createLinkToken(
     language: 'en',
   };
   if (process.env.PLAID_WEBHOOK_URL) params.webhook = process.env.PLAID_WEBHOOK_URL;
-  if (platform === 'ios') {
-    if (!process.env.PLAID_IOS_REDIRECT_URI) throw new PlaidError('IOS_REDIRECT_URI_REQUIRED');
-    params.redirect_uri = process.env.PLAID_IOS_REDIRECT_URI;
+  const redirect =
+    platform === 'ios' ? process.env.PLAID_IOS_REDIRECT_URI : process.env.PLAID_WEB_REDIRECT_URI;
+  if (platform === 'ios' && !redirect) throw new PlaidError('IOS_REDIRECT_URI_REQUIRED');
+  if (redirect) {
+    const url = new URL(redirect);
+    if (
+      url.protocol !== 'https:' ||
+      !acceptedOrigins().has(url.origin) ||
+      url.username ||
+      url.password ||
+      url.hash
+    )
+      throw new PlaidError('INVALID_REDIRECT_URI');
+    params.redirect_uri = url.toString();
   }
   if (connectionId) {
     const c = await ownedConnection(db, connectionId, owner);
@@ -174,9 +235,19 @@ export async function exchangeLink(
       country_codes: ['US', 'CA'],
     });
     if (!inst.institution.products.includes(product)) throw new PlaidError('PRODUCT_NOT_SUPPORTED');
-    const id = existing.rows[0]?.id ?? randomUUID();
-    await db.transaction(async (tx) => {
-      if (existing.rows[0]) await tx.query('DELETE FROM connections WHERE id=$1', [id]);
+    return await db.transaction(async (tx) => {
+      await tx.query('SELECT id FROM users WHERE id=$1 FOR UPDATE', [owner]);
+      await provider.assertCurrent?.(tx, owner);
+      const current = (
+        await tx.query<Connection>(
+          'SELECT * FROM connections WHERE owner_id=$1 AND institution_id=$2 AND product=$3 FOR UPDATE',
+          [owner, institutionId, product],
+        )
+      ).rows[0];
+      if (current && current.status !== 'disconnected')
+        throw new PlaidError('DUPLICATE_CONNECTION');
+      const id = current?.id ?? randomUUID();
+      if (current) await tx.query('DELETE FROM connections WHERE id=$1', [id]);
       await tx.query(
         'INSERT INTO connections(id,owner_id,item_id,institution_id,institution_name,encrypted_token,product,selected_accounts,status) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)',
         [
@@ -191,10 +262,18 @@ export async function exchangeLink(
           'initial_loading',
         ],
       );
+      await enqueueSync(tx, id);
+      return id;
     });
-    return id;
   } catch (e) {
-    await provider.call('/item/remove', { access_token: token }).catch(() => {});
+    try {
+      await withPlaidDeadline(deadlineSources.get(provider) ?? provider, Date.now() + 5000).call(
+        '/item/remove',
+        { access_token: token },
+      );
+    } catch {
+      console.error('Plaid Item cleanup could not be confirmed', { code: 'ITEM_CLEANUP_FAILED' });
+    }
     throw e;
   }
 }
@@ -363,7 +442,8 @@ export async function collectSync(provider: PlaidProvider, token: string, cursor
         batch.modified.push(...r.modified);
         batch.removed.push(...r.removed);
         next = r.next_cursor;
-        if (!r.has_more) return { ...batch, cursor: next };
+        if (!r.has_more)
+          return { ...batch, cursor: next, updateStatus: r.transactions_update_status };
       }
       throw new PlaidError('PAGINATION_LIMIT');
     } catch (e) {
@@ -418,123 +498,7 @@ export async function syncConnection(
       }
       if (!complete) throw new PlaidError('INCOMPLETE_INVESTMENT_PAGINATION');
     }
-    return await mutateState(db, owner, async (s, tx) => {
-      const live = await ownedConnection(tx, id, owner);
-      if (
-        live.cursor !== c.cursor ||
-        live.encrypted_token !== c.encrypted_token ||
-        JSON.stringify(live.selected_accounts) !== JSON.stringify(c.selected_accounts) ||
-        live.status === 'disconnected'
-      )
-        throw new PlaidError('SYNC_CONFLICT_RETRY');
-      for (const a of s.accounts.filter(
-        (a) =>
-          a.connectionId === id &&
-          !metadata.accounts.some((raw: any) => raw.account_id === a.providerId),
-      ))
-        a.enabled = false;
-      for (const raw of metadata.accounts) {
-        let a = s.accounts.find((a) => a.connectionId === id && a.providerId === raw.account_id);
-        const selected = c.selected_accounts.includes(raw.account_id);
-        if (!a && !selected) continue;
-        const value: Account = {
-          id: a?.id ?? randomUUID(),
-          name: a?.name ?? raw.name,
-          type: typeMap(raw),
-          currency: raw.balances.iso_currency_code ?? 'USD',
-          balance: minor(raw.balances.current),
-          includeInNetWorth: a?.includeInNetWorth ?? true,
-          enabled: selected,
-          source: 'plaid',
-          updatedAt: new Date().toISOString(),
-          mask: raw.mask ?? undefined,
-          connectionId: id,
-          providerId: raw.account_id,
-          coverageStart: a?.coverageStart,
-          coverageEnd: a?.coverageEnd,
-          coverageComplete: a?.coverageComplete ?? false,
-        };
-        if (a) Object.assign(a, value);
-        else {
-          s.accounts.push(value);
-          a = value;
-        }
-        if (a.balance !== null) {
-          s.snapshots = s.snapshots.filter((p) => p.accountId !== a!.id || p.date !== today());
-          s.snapshots.push({
-            id: randomUUID(),
-            accountId: a.id,
-            date: today(),
-            balance: a.balance,
-            currency: a.currency,
-            source: 'plaid',
-          });
-        }
-      }
-      if (batch) applyProviderRecords(s, live, batch);
-      if (investments) {
-        const accountIds = new Set(
-          s.accounts.filter((a) => a.connectionId === id).map((a) => a.id),
-        );
-        s.holdings = s.holdings.filter((h) => !accountIds.has(h.accountId));
-        for (const h of investments.holdings) {
-          const a = s.accounts.find((a) => a.connectionId === id && a.providerId === h.account_id);
-          if (!a) continue;
-          const security = investments.securities.find((x: any) => x.security_id === h.security_id);
-          s.holdings.push({
-            id: `${a.id}:${h.security_id}`,
-            accountId: a.id,
-            symbol: security?.ticker_symbol ?? '—',
-            name: security?.name ?? 'Unsupported security',
-            quantity: String(h.quantity ?? 0),
-            price: minor(h.institution_price ?? security?.close_price),
-            marketValue: minor(h.institution_value),
-            costBasis: minor(h.cost_basis),
-            currency: h.iso_currency_code ?? a.currency,
-            priceAt: h.institution_price_as_of ?? security?.close_price_as_of ?? null,
-            type: security?.type ?? 'Other',
-            providerId: h.security_id,
-            source: 'plaid',
-          });
-        }
-        s.holdingSnapshots = s.holdingSnapshots.filter(
-          (h) => !accountIds.has(h.accountId) || h.date !== today(),
-        );
-        s.holdingSnapshots.push(
-          ...s.holdings
-            .filter((h) => accountIds.has(h.accountId))
-            .map((h) => ({ ...h, id: randomUUID(), holdingId: h.id, date: today() })),
-        );
-        s.investmentActivity = s.investmentActivity.filter((a) => !accountIds.has(a.accountId));
-        for (const t of activity) {
-          const a = s.accounts.find((a) => a.connectionId === id && a.providerId === t.account_id);
-          if (a)
-            s.investmentActivity.push({
-              id: t.investment_transaction_id,
-              accountId: a.id,
-              date: t.date,
-              type: t.type,
-              amount: minor(t.amount) ?? 0,
-              currency: t.iso_currency_code ?? a.currency,
-              name: t.name,
-              securityId: t.security_id ?? null,
-              quantity: String(t.quantity ?? 0),
-              source: 'plaid',
-            });
-        }
-      }
-      const status =
-        c.product === 'investments' || live.historical_complete
-          ? 'healthy'
-          : live.initial_complete
-            ? 'historical_loading'
-            : 'initial_loading';
-      await tx.query(
-        'UPDATE connections SET cursor=$1,status=$2,last_synced_at=now(),error_code=NULL WHERE id=$3 AND owner_id=$4',
-        [batch?.cursor ?? c.cursor, status, id, owner],
-      );
-      return s;
-    });
+    return await commitSync(db, c, metadata, batch, investments, activity);
   } catch (e) {
     const code = e instanceof PlaidError ? e.code : 'SYNC_FAILED';
     const status =
@@ -552,6 +516,171 @@ export async function syncConnection(
     throw new PlaidError(code);
   }
 }
+
+type SyncBatch = {
+  added: any[];
+  modified: any[];
+  removed: any[];
+  cursor: string | null;
+  updateStatus?: string;
+};
+async function commitSync(
+  db: Database,
+  c: Connection,
+  metadata: any,
+  batch: SyncBatch | null,
+  investments: any,
+  activity: any[],
+  lease?: { token: string; generation: number },
+) {
+  const id = c.id,
+    owner = c.owner_id;
+  return mutateState(db, owner, async (s, tx) => {
+    const live = (
+      await tx.query<Connection>(
+        'SELECT * FROM connections WHERE id=$1 AND owner_id=$2 FOR UPDATE',
+        [id, owner],
+      )
+    ).rows[0];
+    if (!live) throw new PlaidError('SYNC_CONFLICT_RETRY');
+    if (lease) await requireLease(tx, id, lease.token);
+    if (
+      live.cursor !== c.cursor ||
+      live.encrypted_token !== c.encrypted_token ||
+      JSON.stringify(live.selected_accounts) !== JSON.stringify(c.selected_accounts) ||
+      live.status === 'disconnected'
+    )
+      throw new PlaidError('SYNC_CONFLICT_RETRY');
+    for (const a of s.accounts.filter(
+      (a) =>
+        a.connectionId === id &&
+        !metadata.accounts.some((raw: any) => raw.account_id === a.providerId),
+    ))
+      a.enabled = false;
+    for (const raw of metadata.accounts) {
+      let a = s.accounts.find((a) => a.connectionId === id && a.providerId === raw.account_id);
+      const selected = c.selected_accounts.includes(raw.account_id);
+      if (!a && !selected) continue;
+      const value: Account = {
+        id: a?.id ?? randomUUID(),
+        name: a?.name ?? raw.name,
+        type: typeMap(raw),
+        currency: raw.balances.iso_currency_code ?? 'USD',
+        balance: minor(raw.balances.current),
+        includeInNetWorth: a?.includeInNetWorth ?? true,
+        enabled: selected,
+        source: 'plaid',
+        updatedAt: new Date().toISOString(),
+        mask: raw.mask ?? undefined,
+        connectionId: id,
+        providerId: raw.account_id,
+        coverageStart: a?.coverageStart,
+        coverageEnd: a?.coverageEnd,
+        coverageComplete: a?.coverageComplete ?? false,
+      };
+      if (a) Object.assign(a, value);
+      else {
+        s.accounts.push(value);
+        a = value;
+      }
+      if (a.balance !== null) {
+        s.snapshots = s.snapshots.filter((p) => p.accountId !== a!.id || p.date !== today());
+        s.snapshots.push({
+          id: randomUUID(),
+          accountId: a.id,
+          date: today(),
+          balance: a.balance,
+          currency: a.currency,
+          source: 'plaid',
+        });
+      }
+    }
+    if (batch) {
+      live.initial_complete ||= ['INITIAL_UPDATE_COMPLETE', 'HISTORICAL_UPDATE_COMPLETE'].includes(
+        batch.updateStatus ?? '',
+      );
+      live.historical_complete ||= batch.updateStatus === 'HISTORICAL_UPDATE_COMPLETE';
+      applyProviderRecords(s, live, batch);
+    }
+    if (investments) {
+      const accountIds = new Set(s.accounts.filter((a) => a.connectionId === id).map((a) => a.id));
+      s.holdings = s.holdings.filter((h) => !accountIds.has(h.accountId));
+      for (const h of investments.holdings) {
+        const a = s.accounts.find((a) => a.connectionId === id && a.providerId === h.account_id);
+        if (!a) continue;
+        const security = investments.securities.find((x: any) => x.security_id === h.security_id);
+        s.holdings.push({
+          id: `${a.id}:${h.security_id}`,
+          accountId: a.id,
+          symbol: security?.ticker_symbol ?? '—',
+          name: security?.name ?? 'Unsupported security',
+          quantity: String(h.quantity ?? 0),
+          price: minor(h.institution_price ?? security?.close_price),
+          marketValue: minor(h.institution_value),
+          costBasis: minor(h.cost_basis),
+          currency: h.iso_currency_code ?? a.currency,
+          priceAt: h.institution_price_as_of ?? security?.close_price_as_of ?? null,
+          type: security?.type ?? 'Other',
+          providerId: h.security_id,
+          source: 'plaid',
+        });
+      }
+      s.holdingSnapshots = s.holdingSnapshots.filter(
+        (h) => !accountIds.has(h.accountId) || h.date !== today(),
+      );
+      s.holdingSnapshots.push(
+        ...s.holdings
+          .filter((h) => accountIds.has(h.accountId))
+          .map((h) => ({ ...h, id: randomUUID(), holdingId: h.id, date: today() })),
+      );
+      s.investmentActivity = s.investmentActivity.filter((a) => !accountIds.has(a.accountId));
+      for (const t of activity) {
+        const a = s.accounts.find((a) => a.connectionId === id && a.providerId === t.account_id);
+        if (a)
+          s.investmentActivity.push({
+            id: t.investment_transaction_id,
+            accountId: a.id,
+            date: t.date,
+            type: t.type,
+            amount: minor(t.amount) ?? 0,
+            currency: t.iso_currency_code ?? a.currency,
+            name: t.name,
+            securityId: t.security_id ?? null,
+            quantity: String(t.quantity ?? 0),
+            source: 'plaid',
+          });
+      }
+    }
+    const status =
+      c.product === 'investments' || live.historical_complete
+        ? 'healthy'
+        : live.initial_complete
+          ? 'historical_loading'
+          : 'initial_loading';
+    await tx.query(
+      'UPDATE connections SET cursor=$1,status=$2,last_synced_at=now(),error_code=NULL,initial_complete=$5,historical_complete=$6 WHERE id=$3 AND owner_id=$4',
+      [
+        batch?.cursor ?? c.cursor,
+        status,
+        id,
+        owner,
+        live.initial_complete,
+        live.historical_complete,
+      ],
+    );
+    if (lease) {
+      await tx.query(
+        `UPDATE sync_jobs SET completed_generation=$1,
+            status=CASE WHEN generation>$1 THEN 'pending' ELSE 'done' END,
+            available_at=now(),lease_token=NULL,lease_until=NULL,stage=NULL,attempts=0,
+            last_error=NULL,updated_at=now() WHERE connection_id=$2 AND lease_token=$3`,
+        [lease.generation, id, lease.token],
+      );
+    }
+    return s;
+  });
+}
+
 const jwkCache = new Map<string, { key: JWK; at: number }>();
 export async function verifyWebhook(
   provider: PlaidProvider,
@@ -564,7 +693,15 @@ export async function verifyWebhook(
     if (header.alg !== 'ES256' || !header.kid) return false;
     let entry = jwkCache.get(header.kid);
     if (!entry || now - entry.at > 3600000) {
-      const r = await provider.call('/webhook_verification_key/get', { key_id: header.kid });
+      let r: any;
+      try {
+        r = await withPlaidDeadline(provider, Date.now() + 5000).call(
+          '/webhook_verification_key/get',
+          { key_id: header.kid },
+        );
+      } catch {
+        throw new PlaidError('WEBHOOK_VERIFICATION_UNAVAILABLE');
+      }
       if (r.key.expired_at) return false;
       entry = { key: r.key, at: now };
       jwkCache.set(header.kid, entry);
@@ -581,28 +718,34 @@ export async function verifyWebhook(
     if (typeof claimed !== 'string' || !/^[a-f0-9]{64}$/.test(claimed)) return false;
     const actual = createHash('sha256').update(body).digest();
     return timingSafeEqual(actual, Buffer.from(claimed, 'hex'));
-  } catch {
+  } catch (error) {
+    if (error instanceof PlaidError && error.code === 'WEBHOOK_VERIFICATION_UNAVAILABLE')
+      throw error;
     return false;
   }
 }
 export async function enqueueWebhook(db: Database, body: Buffer) {
   const event = JSON.parse(body.toString('utf8'));
   if (!event.item_id) return;
-  const row = (
-    await db.query<Connection>('SELECT * FROM connections WHERE item_id=$1 AND status<>$2', [
-      event.item_id,
-      'disconnected',
-    ])
-  ).rows[0];
-  if (!row) return;
-  const id = createHash('sha256').update(body).digest('hex');
   await db.transaction(async (tx) => {
+    const row = (
+      await tx.query<Connection>(
+        'SELECT * FROM connections WHERE item_id=$1 AND status<>$2 FOR UPDATE',
+        [event.item_id, 'disconnected'],
+      )
+    ).rows[0];
+    if (!row) return;
     if (event.webhook_code === 'ERROR') {
       await tx.query('UPDATE connections SET status=$1,error_code=$2 WHERE id=$3', [
         event.error?.error_code === 'ITEM_LOGIN_REQUIRED' ? 'reauthentication_required' : 'failed',
         event.error?.error_code ?? 'ITEM_ERROR',
         row.id,
       ]);
+      await tx.query(
+        `UPDATE sync_jobs SET status='failed',lease_token=NULL,lease_until=NULL,stage=NULL,
+          last_error=$2,updated_at=now() WHERE connection_id=$1`,
+        [row.id, event.error?.error_code ?? 'ITEM_ERROR'],
+      );
       return;
     }
     if (
@@ -619,35 +762,308 @@ export async function enqueueWebhook(db: Database, body: Buffer) {
       'UPDATE connections SET initial_complete=initial_complete OR $1,historical_complete=historical_complete OR $2 WHERE id=$3',
       [event.initial_update_complete === true, event.historical_update_complete === true, row.id],
     );
+    await enqueueSync(tx, row.id);
+  });
+}
+export async function enqueueSync(db: SQL, connectionId: string): Promise<void> {
+  await db.query(
+    `INSERT INTO sync_jobs(connection_id) VALUES($1)
+      ON CONFLICT(connection_id) DO UPDATE SET generation=sync_jobs.generation+1,
+        status=CASE WHEN sync_jobs.status='processing' THEN 'processing' ELSE 'pending' END,
+        available_at=now(),attempts=0,last_error=NULL,updated_at=now()`,
+    [connectionId],
+  );
+}
+
+// Call within the same transaction as account-selection or cursor changes.
+export async function invalidateSync(db: SQL, connectionId: string): Promise<void> {
+  await db.query(
+    `UPDATE sync_jobs SET stage=NULL,lease_token=NULL,lease_until=NULL,status='pending',
+      available_at=now(),attempts=0,last_error=NULL,updated_at=now() WHERE connection_id=$1`,
+    [connectionId],
+  );
+}
+
+export async function enqueueStaleSyncs(db: SQL): Promise<void> {
+  await db.query(
+    `INSERT INTO sync_jobs(connection_id)
+      SELECT c.id FROM connections c LEFT JOIN sync_jobs j ON j.connection_id=c.id
+      WHERE c.status IN ('healthy','initial_loading','historical_loading','failed')
+        AND (j.connection_id IS NULL OR
+          (j.status='done' AND j.updated_at<now()-interval '2 minutes') OR
+          (j.status='failed' AND j.updated_at<now()-interval '6 hours'))
+        AND (c.last_synced_at IS NULL OR c.last_synced_at<now()-interval '6 hours' OR
+          (c.status IN ('initial_loading','historical_loading') AND
+            c.last_synced_at<now()-interval '2 minutes'))
+      ON CONFLICT(connection_id) DO UPDATE SET generation=sync_jobs.generation+1,
+        status='pending',available_at=now(),attempts=0,last_error=NULL,stage=NULL,updated_at=now()
+      WHERE sync_jobs.status IN ('done','failed')`,
+  );
+}
+
+type SyncStage = {
+  version: 1;
+  source: string;
+  generation: number;
+  phase: 'accounts' | 'transactions' | 'holdings' | 'activity' | 'commit';
+  metadata?: any;
+  batch: SyncBatch;
+  investments?: any;
+  activity: any[];
+  offset: number;
+  pages: number;
+  restarts: number;
+  fromDate: string;
+  throughDate: string;
+};
+type SyncJob = {
+  connection_id: string;
+  owner_id: string;
+  generation: number;
+  attempts: number;
+  stage: SyncStage | null;
+  lease_token: string;
+};
+const connectionSource = (connection: Connection) =>
+  createHash('sha256')
+    .update(
+      JSON.stringify([
+        connection.cursor,
+        connection.encrypted_token,
+        connection.selected_accounts,
+        connection.item_id,
+        connection.product,
+      ]),
+    )
+    .digest('hex');
+function newStage(connection: Connection, generation: number): SyncStage {
+  const throughDate = today(),
+    startMonth = shiftMonth(throughDate.slice(0, 7), -24);
+  return {
+    version: 1,
+    source: connectionSource(connection),
+    generation,
+    phase: 'accounts',
+    batch: { added: [], modified: [], removed: [], cursor: connection.cursor },
+    activity: [],
+    offset: 0,
+    pages: 0,
+    restarts: 0,
+    fromDate: `${startMonth}-${String(Math.min(Number(throughDate.slice(8)), monthDays(startMonth))).padStart(2, '0')}`,
+    throughDate,
+  };
+}
+async function requireLease(tx: SQL, id: string, token: string): Promise<SyncJob> {
+  const row = (
+    await tx.query<SyncJob>(
+      `SELECT * FROM sync_jobs WHERE connection_id=$1 AND lease_token=$2
+      AND status='processing' AND lease_until>now() FOR UPDATE`,
+      [id, token],
+    )
+  ).rows[0];
+  if (!row) throw new PlaidError('SYNC_LEASE_LOST');
+  return row;
+}
+async function saveStage(db: Database, job: SyncJob, stage: SyncStage) {
+  await db.transaction(async (tx) => {
+    await requireLease(tx, job.connection_id, job.lease_token);
+    const connection = await ownedConnection(tx, job.connection_id, job.owner_id);
+    if (connection.status === 'disconnected' || connectionSource(connection) !== stage.source)
+      throw new PlaidError('SYNC_CONFLICT_RETRY');
     await tx.query(
-      'INSERT INTO webhook_jobs(id,connection_id,payload) VALUES($1,$2,$3) ON CONFLICT DO NOTHING',
-      [id, row.id, JSON.stringify(event)],
+      `UPDATE sync_jobs SET stage=$1,attempts=0,updated_at=now()
+        WHERE connection_id=$2 AND lease_token=$3`,
+      [JSON.stringify(stage), job.connection_id, job.lease_token],
     );
   });
 }
-export async function processJob(db: Database, provider: PlaidProvider) {
+const errorStatus = (code: string) =>
+  code === 'ITEM_LOGIN_REQUIRED'
+    ? 'reauthentication_required'
+    : ['PRODUCT_NOT_SUPPORTED', 'INVALID_PRODUCT'].includes(code)
+      ? 'unsupported'
+      : code === 'PRODUCT_NOT_READY'
+        ? 'initial_loading'
+        : 'failed';
+
+export async function processJob(
+  db: Database,
+  providerOrFactory: PlaidProvider | ((owner: string) => Promise<PlaidProvider>),
+  { deadline = Date.now() + 45000 }: { deadline?: number } = {},
+) {
+  if (deadline - Date.now() < 5000) return false;
   const job = await db.transaction(async (tx) => {
     const row = (
-      await tx.query(
-        "SELECT j.*,c.owner_id FROM webhook_jobs j JOIN connections c ON c.id=j.connection_id WHERE j.status IN ('pending','processing') AND j.available_at<=now() ORDER BY j.created_at LIMIT 1 FOR UPDATE OF j SKIP LOCKED",
+      await tx.query<SyncJob>(
+        `SELECT j.*,c.owner_id FROM sync_jobs j JOIN connections c ON c.id=j.connection_id
+        WHERE c.status<>'disconnected' AND
+          ((j.status='pending' AND j.available_at<=now()) OR
+           (j.status='processing' AND j.lease_until<=now()))
+        ORDER BY j.available_at,j.created_at LIMIT 1 FOR UPDATE OF j SKIP LOCKED`,
       )
     ).rows[0];
-    if (row)
+    if (!row) return undefined;
+    if (row.attempts >= 10) {
       await tx.query(
-        "UPDATE webhook_jobs SET status='processing',attempts=attempts+1,available_at=now()+interval '2 minutes' WHERE id=$1",
-        [row.id],
+        `UPDATE sync_jobs SET status='failed',lease_token=NULL,lease_until=NULL,
+          last_error='SYNC_RETRY_EXHAUSTED',updated_at=now() WHERE connection_id=$1`,
+        [row.connection_id],
       );
-    return row;
+      return { ...row, exhausted: true };
+    }
+    row.lease_token = randomUUID();
+    row.attempts++;
+    await tx.query(
+      `UPDATE sync_jobs SET status='processing',attempts=$1,lease_token=$2,
+        lease_until=now()+interval '90 seconds',updated_at=now() WHERE connection_id=$3`,
+      [row.attempts, row.lease_token, row.connection_id],
+    );
+    return { ...row, exhausted: false };
   });
   if (!job) return false;
-  try {
-    await syncConnection(db, provider, job.connection_id, job.owner_id);
-    await db.query("UPDATE webhook_jobs SET status='done' WHERE id=$1", [job.id]);
-  } catch {
+  if (job.exhausted) {
     await db.query(
-      "UPDATE webhook_jobs SET status=$1,available_at=now()+($2 * interval '1 second') WHERE id=$3",
-      [job.attempts >= 9 ? 'failed' : 'pending', Math.min(3600, 2 ** job.attempts * 10), job.id],
+      `UPDATE connections SET status='failed',error_code='SYNC_RETRY_EXHAUSTED'
+        WHERE id=$1 AND status<>'disconnected' AND EXISTS
+          (SELECT 1 FROM sync_jobs WHERE connection_id=$1 AND status='failed'
+            AND last_error='SYNC_RETRY_EXHAUSTED')`,
+      [job.connection_id],
     );
+    return true;
+  }
+  try {
+    const c = await ownedConnection(db, job.connection_id, job.owner_id);
+    if (c.status === 'disconnected') throw new PlaidError('SYNC_CONFLICT_RETRY');
+    const resolved =
+      typeof providerOrFactory === 'function'
+        ? await providerOrFactory(job.owner_id)
+        : providerOrFactory;
+    // Reserve time for checkpointing/commit and acknowledgment before the function's hard limit.
+    const provider = withPlaidDeadline(resolved, deadline - 3000);
+    const token = decryptToken(c.encrypted_token);
+    let stage =
+      job.stage?.version === 1 && job.stage.source === connectionSource(c)
+        ? job.stage
+        : newStage(c, job.generation);
+    while (deadline - Date.now() > 5000) {
+      if (stage.phase === 'commit') {
+        await commitSync(
+          db,
+          c,
+          stage.metadata,
+          c.product === 'transactions' ? stage.batch : null,
+          stage.investments,
+          stage.activity,
+          { token: job.lease_token, generation: stage.generation },
+        );
+        return true;
+      }
+      if (stage.phase === 'accounts') {
+        stage.metadata = await provider.call('/accounts/get', { access_token: token });
+        stage.phase = c.product === 'transactions' ? 'transactions' : 'holdings';
+      } else if (stage.phase === 'transactions') {
+        if (stage.pages >= 1000) throw new PlaidError('PAGINATION_LIMIT');
+        try {
+          const page = await provider.call('/transactions/sync', {
+            access_token: token,
+            ...(stage.batch.cursor ? { cursor: stage.batch.cursor } : {}),
+            count: 500,
+          });
+          stage.batch.added.push(...page.added);
+          stage.batch.modified.push(...page.modified);
+          stage.batch.removed.push(...page.removed);
+          stage.batch.cursor = page.next_cursor;
+          stage.batch.updateStatus = page.transactions_update_status;
+          stage.pages++;
+          if (!page.has_more) stage.phase = 'commit';
+        } catch (error) {
+          if (
+            !(error instanceof PlaidError) ||
+            error.code !== 'TRANSACTIONS_SYNC_MUTATION_DURING_PAGINATION'
+          )
+            throw error;
+          stage.batch = { added: [], modified: [], removed: [], cursor: c.cursor };
+          stage.pages = 0;
+          stage.restarts++;
+          await saveStage(db, job, stage);
+          if (stage.restarts > 3) throw new PlaidError('SYNC_RESTART_LIMIT');
+          continue;
+        }
+      } else if (stage.phase === 'holdings') {
+        stage.investments = await provider.call('/investments/holdings/get', {
+          access_token: token,
+        });
+        stage.phase = 'activity';
+      } else {
+        if (stage.offset >= 100000) throw new PlaidError('INCOMPLETE_INVESTMENT_PAGINATION');
+        const page = await provider.call('/investments/transactions/get', {
+          access_token: token,
+          start_date: stage.fromDate,
+          end_date: stage.throughDate,
+          options: { offset: stage.offset, count: 500 },
+        });
+        stage.activity.push(...page.investment_transactions);
+        stage.offset += page.investment_transactions.length;
+        if (stage.offset >= page.total_investment_transactions) stage.phase = 'commit';
+        else if (!page.investment_transactions.length)
+          throw new PlaidError('INCOMPLETE_INVESTMENT_PAGINATION');
+      }
+      await saveStage(db, job, stage);
+    }
+    throw new PlaidError('SYNC_DEADLINE');
+  } catch (error) {
+    const code = error instanceof PlaidError ? error.code : 'SYNC_FAILED';
+    if (code === 'SYNC_LEASE_LOST') return true;
+    await db.transaction(async (tx) => {
+      // Match account-update/commit ordering: connection first, then its job lease.
+      const connection = (
+        await tx.query<Connection>(
+          'SELECT * FROM connections WHERE id=$1 AND owner_id=$2 FOR UPDATE',
+          [job.connection_id, job.owner_id],
+        )
+      ).rows[0];
+      if (!connection) return;
+      let held: SyncJob;
+      try {
+        held = await requireLease(tx, job.connection_id, job.lease_token);
+      } catch (lost) {
+        if (lost instanceof PlaidError && lost.code === 'SYNC_LEASE_LOST') return;
+        throw lost;
+      }
+      const deferred = code === 'SYNC_DEADLINE' || code === 'SYNC_CONFLICT_RETRY';
+      const permanent = [
+        'ITEM_LOGIN_REQUIRED',
+        'PRODUCT_NOT_SUPPORTED',
+        'INVALID_PRODUCT',
+        'SANDBOX_NOT_CONFIGURED',
+        'PRODUCTION_BLOCKED',
+        'ENCRYPTION_KEY_REQUIRED',
+        'PAGINATION_LIMIT',
+        'SYNC_RESTART_LIMIT',
+        'INCOMPLETE_INVESTMENT_PAGINATION',
+      ].includes(code);
+      const failed = permanent || held.attempts >= 10;
+      await tx.query(
+        `UPDATE sync_jobs SET status=$1,available_at=now()+($2 * interval '1 second'),
+          lease_token=NULL,lease_until=NULL,last_error=$3,
+          stage=CASE WHEN $4 THEN NULL ELSE stage END,updated_at=now()
+          WHERE connection_id=$5 AND lease_token=$6`,
+        [
+          failed ? 'failed' : 'pending',
+          deferred && !failed ? 0 : Math.min(3600, 2 ** held.attempts * 10),
+          code,
+          code === 'SYNC_CONFLICT_RETRY',
+          job.connection_id,
+          job.lease_token,
+        ],
+      );
+      if (!deferred && connection.status !== 'disconnected')
+        await tx.query('UPDATE connections SET status=$1,error_code=$2 WHERE id=$3', [
+          errorStatus(code),
+          code,
+          job.connection_id,
+        ]);
+    });
   }
   return true;
 }
@@ -662,10 +1078,19 @@ export async function disconnect(
   if (c.status !== 'disconnected')
     await provider.call('/item/remove', { access_token: decryptToken(c.encrypted_token) });
   return mutateState(db, owner, async (s, tx) => {
+    const current = (
+      await tx.query<Connection>(
+        'SELECT * FROM connections WHERE id=$1 AND owner_id=$2 FOR UPDATE',
+        [id, owner],
+      )
+    ).rows[0];
+    if (!current || current.item_id !== c.item_id || current.encrypted_token !== c.encrypted_token)
+      throw Object.assign(new PlaidError('CONNECTION_CHANGED_RETRY'), { status: 409 });
     await tx.query(
       "UPDATE connections SET encrypted_token='',status='disconnected',cursor=NULL WHERE id=$1 AND owner_id=$2",
       [id, owner],
     );
+    await tx.query('DELETE FROM sync_jobs WHERE connection_id=$1', [id]);
     await tx.query('DELETE FROM webhook_jobs WHERE connection_id=$1', [id]);
     if (deleteData) {
       const ids = new Set(s.accounts.filter((a) => a.connectionId === id).map((a) => a.id));

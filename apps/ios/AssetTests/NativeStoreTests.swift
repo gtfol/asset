@@ -41,12 +41,14 @@ private enum NativeStoreTests {
     let demo = try store.engine.call("createDemo", ["2026-10-15"]) as? JSON ?? [:]
     try expect(!demo.isEmpty, "Production calculation engine must load from the temporary bundle")
     try checkGoogleSignIn()
+    try checkPlaidLifecycle()
+    try checkAPIRequests()
     try checkIdentitiesAndTransactions(store: store, demo: demo)
     try checkFiltersAndPaging(store: store, demo: demo)
     try checkInvalidation(store: store, demo: demo)
     try measureLargeLedger(store: store, demo: demo)
     print(
-      "PASS: \(checks) native sign-in, Store identity, filtering, paging, and cache invalidation checks."
+      "PASS: \(checks) native sign-in, Plaid lifecycle, API requests, Store identity, filtering, paging, and cache invalidation checks."
     )
   }
 
@@ -87,6 +89,79 @@ private enum NativeStoreTests {
       }
       try expect(
         rejected, "Invalid, ambiguous, or token-bearing callback must be rejected: \(invalid)")
+    }
+  }
+
+  private static func checkPlaidLifecycle() throws {
+    var lifecycle = PlaidLinkLifecycle()
+    let original = PlaidLinkAttempt(
+      product: "investments", connectionID: "existing", workspaceGeneration: 3,
+      server: "https://asset.example", token: "session-a")
+    let replacement = PlaidLinkAttempt(
+      product: "transactions", connectionID: nil, workspaceGeneration: 4,
+      server: "https://other.example", token: "session-b")
+    try expect(lifecycle.begin(original), "A fresh Link attempt starts")
+    try expect(!lifecycle.begin(replacement), "An active Link attempt rejects overlapping starts")
+    try expect(
+      lifecycle.attempt == original,
+      "An overlap cannot change captured product, connection, or workspace")
+    try expect(
+      !lifecycle.loaded(replacement.id), "Stale load callbacks cannot ready another session")
+    try expect(lifecycle.loaded(original.id) && lifecycle.ready, "Current session can become ready")
+    try expect(
+      lifecycle.consume(original.id), "Success consumes the current session before exchange")
+    try expect(
+      !lifecycle.ready && lifecycle.active, "Consumed sessions stay locked while exchanging")
+    try expect(!lifecycle.consume(original.id), "Duplicate success callbacks cannot exchange twice")
+    try expect(
+      !lifecycle.loaded(original.id), "Late load callbacks cannot reopen a consumed session")
+    try expect(
+      !lifecycle.finish(replacement.id), "Stale completion cannot clear the current attempt")
+    try expect(
+      lifecycle.finish(original.id) && !lifecycle.active, "Completion or failure releases the lock")
+    try expect(lifecycle.begin(replacement), "Retry creates a new session after a failed exchange")
+    try expect(!lifecycle.consume(original.id), "An old success cannot consume the retry session")
+    try expect(!lifecycle.finish(original.id), "An old exit cannot cancel the retry session")
+    try expect(lifecycle.attempt == replacement, "Retry retains its own immutable context")
+    try expect(lifecycle.finish(replacement.id), "Cancellation clears the current session")
+  }
+
+  private static func checkAPIRequests() throws {
+    let server = "https://asset.example"
+    let payload: JSON = [
+      "clientId": "sample-client", "secret": "sample-secret", "environment": "sandbox",
+    ]
+    let put = try APIRequest.make(
+      "/plaid/config", body: payload, server: server, token: "session", method: "PUT")
+    try expect(put.httpMethod == "PUT", "Credential writes use PUT")
+    try expect(
+      put.value(forHTTPHeaderField: "Authorization") == "Bearer session",
+      "PUT retains bearer authentication")
+    try expect(
+      put.value(forHTTPHeaderField: "x-asset-client") == "ios",
+      "Native requests identify their platform")
+    let decoded = try JSONSerialization.jsonObject(with: put.httpBody!) as? JSON
+    try expect(
+      decoded?["secret"] as? String == "sample-secret", "Credentials are sent in the request body")
+    try expect(
+      put.url?.query == nil && put.url?.path == "/api/plaid/config",
+      "Credentials never enter the URL")
+    let delete = try APIRequest.make(
+      "/plaid/config", server: server, token: "session", method: "DELETE")
+    try expect(
+      delete.httpMethod == "DELETE" && delete.httpBody == nil, "Removal uses DELETE without a body")
+    try expect(
+      delete.value(forHTTPHeaderField: "Authorization") == "Bearer session",
+      "DELETE retains bearer authentication")
+    let get = try APIRequest.make("/plaid/config", server: server, token: "session")
+    try expect(get.httpMethod == "GET", "Existing bodyless requests remain GET")
+    let post = try APIRequest.make("/plaid/link-token", body: [:], server: server, token: "session")
+    try expect(post.httpMethod == "POST", "Existing body requests remain POST")
+    for path in ["/auth/google/start", "/auth/google/exchange"] {
+      let auth = try APIRequest.make(path, body: [:], server: server, token: "old-session")
+      try expect(
+        auth.value(forHTTPHeaderField: "Authorization") == nil,
+        "Google sign-in does not receive a previous bearer session")
     }
   }
 

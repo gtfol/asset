@@ -59,10 +59,20 @@ import {
   nextTransactionLimit,
   type TransactionIndexEntry,
 } from './transactions';
-export async function api(path: string, body?: unknown) {
+import { clearPlaidAttempt } from './plaid-link';
+export async function api(
+  path: string,
+  body?: unknown,
+  method?: 'GET' | 'POST' | 'PUT' | 'DELETE',
+  sessionId?: string,
+) {
   const res = await fetch('/api' + path, {
-    method: body === undefined ? 'GET' : 'POST',
-    headers: { 'content-type': 'application/json', 'x-asset-client': 'web' },
+    method: method ?? (body === undefined ? 'GET' : 'POST'),
+    headers: {
+      'content-type': 'application/json',
+      'x-asset-client': 'web',
+      ...(sessionId ? { 'x-asset-session': sessionId } : {}),
+    },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
   if (!res.headers.get('content-type')?.includes('application/json')) {
@@ -98,7 +108,12 @@ export function App() {
     [sidebar, setSidebar] = useState(false),
     [connections, setConnections] = useState<any[]>([]),
     [configured, setConfigured] = useState(false),
+    [sessionId, setSessionId] = useState(''),
+    [plaidReturn, setPlaidReturn] = useState<string | undefined>(() =>
+      window.location.pathname === '/plaid/oauth' ? window.location.href : undefined,
+    ),
     [filters, setFilters] = useState<Record<string, string>>({});
+  const openedPlaidReturn = useRef(false);
   const revisionRef = useRef(0);
   const sessionGeneration = useRef(0);
   const load = useCallback(async () => {
@@ -112,8 +127,17 @@ export function App() {
       revisionRef.current = r.revision;
       setConnections(r.connections);
       setConfigured(r.plaidConfigured);
+      setSessionId(r.sessionId ?? '');
     } catch (e: any) {
       if (generation === sessionGeneration.current && e.status !== 401) setError(e.message);
+      if (generation === sessionGeneration.current && e.status === 401) {
+        clearPlaidAttempt();
+        if (window.location.pathname === '/plaid/oauth') {
+          window.history.replaceState(null, '', '/');
+          setPlaidReturn(undefined);
+          setError('Sign in again, then restart your bank connection.');
+        }
+      }
     } finally {
       if (generation === sessionGeneration.current) setLoading(false);
     }
@@ -121,6 +145,12 @@ export function App() {
   useEffect(() => {
     void load();
   }, [load]);
+  useEffect(() => {
+    if (state && plaidReturn && !openedPlaidReturn.current) {
+      openedPlaidReturn.current = true;
+      setModal({ kind: 'connections' });
+    }
+  }, [state, plaidReturn]);
   const run: Run = useCallback(
     async (command: Command) => {
       const generation = sessionGeneration.current;
@@ -178,7 +208,7 @@ export function App() {
         <p>Opening your workspace…</p>
       </div>
     );
-  if (!state) return <Welcome onReady={load} />;
+  if (!state) return <Welcome onReady={load} message={error} />;
   const d = dashboardView?.data,
     worth = dashboardView?.worth,
     currency = state.settings.currency;
@@ -261,7 +291,10 @@ export function App() {
               onClick={async () => {
                 await api('/auth/logout', {});
                 sessionGeneration.current += 1;
+                clearPlaidAttempt();
                 revisionRef.current = 0;
+                setSessionId('');
+                setPlaidReturn(undefined);
                 setState(null);
                 setSelected(null);
                 setModal(null);
@@ -627,21 +660,29 @@ export function App() {
       )}
       {modal?.kind === 'connections' && (
         <ConnectionsDialog
+          key={sessionId}
           state={state}
           connections={connections}
           configured={configured}
+          sessionId={sessionId}
+          receivedRedirectUri={plaidReturn}
           load={load}
-          onClose={() => setModal(null)}
+          onClose={() => {
+            setModal(null);
+            setPlaidReturn(undefined);
+          }}
         />
       )}
     </div>
   );
 }
-function Welcome({ onReady }: { onReady: () => Promise<void> }) {
-  const [error, setError] = useState(() =>
-      new URLSearchParams(window.location.search).has('auth_error')
-        ? 'Google sign-in was not completed. Please try again.'
-        : '',
+function Welcome({ onReady, message = '' }: { onReady: () => Promise<void>; message?: string }) {
+  const [error, setError] = useState(
+      () =>
+        message ||
+        (new URLSearchParams(window.location.search).has('auth_error')
+          ? 'Google sign-in was not completed. Please try again.'
+          : ''),
     ),
     [busy, setBusy] = useState(false);
   useEffect(() => {
@@ -649,6 +690,7 @@ function Welcome({ onReady }: { onReady: () => Promise<void> }) {
       window.history.replaceState(null, '', window.location.pathname);
   }, []);
   async function go(google: boolean) {
+    clearPlaidAttempt();
     setBusy(true);
     setError('');
     try {

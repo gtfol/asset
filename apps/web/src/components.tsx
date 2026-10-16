@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useLayoutEffect } from 'react';
 import {
   X,
   ChevronLeft,
@@ -47,18 +47,24 @@ export function Modal({
   children,
   onClose,
   wide = false,
+  suspended = false,
 }: {
   title: string;
   children: React.ReactNode;
   onClose: () => void;
   wide?: boolean;
+  suspended?: boolean;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
-  useEffect(() => {
+  useLayoutEffect(() => {
     const previous = document.activeElement as HTMLElement;
-    ref.current?.showModal();
     return () => previous?.focus();
   }, []);
+  useLayoutEffect(() => {
+    const dialog = ref.current;
+    if (suspended) dialog?.close();
+    else if (!dialog?.open) dialog?.showModal();
+  }, [suspended]);
   return (
     <dialog
       ref={ref}

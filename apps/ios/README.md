@@ -31,6 +31,12 @@ The app creates an in-memory random PKCE verifier and sends its SHA-256 challeng
 - `AssetTests/NativeStoreTests.swift` — regression checks against the production Store and paging code.
 - `scripts/` — native verification and optional project/icon regeneration tools.
 
+## Plaid Sandbox
+
+Each signed-in user supplies their own Plaid Client ID and Sandbox secret in Connections. Credentials are validated and encrypted on the server. The app displays only the saved Client ID suffix and keeps the secret input in memory until submission. A secret can be rotated for the same Plaid account while institutions are connected; changing accounts or environments and removing credentials requires disconnecting those institutions first. Local and demo workspaces do not use Plaid credentials.
+
+Native Link uses the pinned LinkKit 7 session API. The server must supply a registered `PLAID_IOS_REDIRECT_URI` when creating native Link tokens. Before bank OAuth can work, configure a real Apple signing team, an `applinks:asset.gtfol.dev` Associated Domains entitlement, and the matching `/.well-known/apple-app-site-association` on the website using that team's actual application identifier prefix and `org.gtfol.asset`. Register the exact HTTPS redirect URI in each user's Plaid Dashboard. The project deliberately does not invent a signing team or application prefix, and the Google sign-in custom scheme is not a Plaid OAuth redirect. Test ordinary Sandbox Link and OAuth/app-to-app separately; a non-OAuth test institution does not verify the universal-link return path.
+
 ## Verify independently
 
 Install Node.js 22 or newer and Xcode command line tools. No `npm install` is needed here. From `apps/ios`:

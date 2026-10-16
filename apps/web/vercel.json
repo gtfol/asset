@@ -9,5 +9,9 @@
       "includeFiles": "server/{migrations/*.sql,certs/*.crt}"
     }
   },
-  "rewrites": [{ "source": "/api/:path*", "destination": "/api" }]
+  "crons": [{ "path": "/api/internal/plaid-worker", "schedule": "* * * * *" }],
+  "rewrites": [
+    { "source": "/api/:path*", "destination": "/api" },
+    { "source": "/plaid/oauth", "destination": "/index.html" }
+  ]
 }
