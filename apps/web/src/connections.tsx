@@ -366,7 +366,7 @@ export function ConnectionsDialog({
                 </div>
               </form>
               {config.redirectUri && (
-                <label>
+                <label className="connection-redirect">
                   Allowed redirect URI
                   <input
                     value={config.redirectUri}

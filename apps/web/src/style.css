@@ -1835,6 +1835,9 @@ td {
 .connection-intro h3 {
   margin-top: 16px;
 }
+.connection-redirect {
+  margin-top: 24px;
+}
 .connection-card {
   margin: 22px 0;
   border-color: var(--border);
