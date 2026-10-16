@@ -7,7 +7,7 @@ import {
   timingSafeEqual,
 } from 'node:crypto';
 import { decodeProtectedHeader, importJWK, jwtVerify, type JWK } from 'jose';
-import { mutateState, type Database, type SQL } from './db';
+import { mutateState, type Database, type SQL } from './db.js';
 import {
   applyRules,
   fingerprint,
@@ -19,7 +19,7 @@ import {
   type State,
   type Transaction,
   type Account,
-} from '../shared/core';
+} from '../shared/core.js';
 export class PlaidError extends Error {
   constructor(public code: string) {
     super(code);

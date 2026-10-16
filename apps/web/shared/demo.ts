@@ -7,7 +7,7 @@ import {
   validateState,
   type State,
   type Transaction,
-} from './core';
+} from './core.js';
 export function createDemo(asOf = today()): State {
   const s = emptyState();
   s.settings.demo = true;

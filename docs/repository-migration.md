@@ -32,6 +32,6 @@ When changing `apps/web/shared`, run `npm run native:resources` in `apps/web` an
 
 ## Vercel
 
-Set **Root Directory to `apps/web`**, with build command `npm run build` and output directory `dist`. These are the new source/build paths, not a completed hosting setup: the API function, hosted database connection, and bank-sync worker still need deployment configuration. See [hosting requirements](PLAID.md).
+Set **Root Directory to `apps/web`**, with build command `npm run build` and output directory `dist`. The web app includes its API function and automatic migrations. Configure the hosted database and Google provider as described in the [web setup](../apps/web/README.md#vercel-and-supabase); the bank-sync worker requires separate hosting. See [hosting requirements](PLAID.md).
 
 The restructure does not change the iOS bundle ID, authentication, API routes, database schema, or financial calculations. No hosted app or TestFlight build is published by moving these files.

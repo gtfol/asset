@@ -19,7 +19,7 @@ The authoritative calculation engine lives in `apps/web/shared`. iOS includes it
 
 ## Deployment
 
-Set the Vercel project's **Root Directory to `apps/web`**. The current app still needs its Vercel API entry point, hosted PostgreSQL connection, and background-job deployment configured; importing this repository alone does not complete those steps. See [hosting requirements](docs/PLAID.md).
+Set the Vercel project's **Root Directory to `apps/web`** and select **Vite**. The web app includes a same-origin API function and automatic database migrations. Configure a dedicated PostgreSQL `DATABASE_URL` and Google sign-in as described in [web hosting setup](apps/web/README.md#vercel-and-supabase). Bank connections require a separate durable worker; they remain disabled on Vercel until it is configured.
 
 The native app keeps bundle ID `org.gtfol.asset`. Signing, App Store Connect, and TestFlight upload are not configured. Local native demo/manual workspaces work without a server; shared web/iPhone data requires the same reachable HTTPS Asset server.
 

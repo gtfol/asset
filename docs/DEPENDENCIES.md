@@ -1,6 +1,6 @@
 # Dependency and license review
 
-Reviewed installed metadata and lockfiles on 2026-10-15. Direct JavaScript dependencies are pinned exactly; `apps/web/package-lock.json` pins transitive versions and integrity hashes. Swift Package Manager pins Plaid LinkKit 7.2.2, revision `3aff12979f81daab780628d7442a1b3f8e7eefc6`. Run `npm ci` in `apps/web` and use the checked-in Swift package resolution in `apps/ios` to reproduce the builds.
+Reviewed installed metadata and lockfiles on October 15–16, 2026. Direct JavaScript dependencies are pinned exactly; `apps/web/package-lock.json` pins transitive versions and integrity hashes. Swift Package Manager pins Plaid LinkKit 7.2.2, revision `3aff12979f81daab780628d7442a1b3f8e7eefc6`. Run `npm ci` in `apps/web` and use the checked-in Swift package resolution in `apps/ios` to reproduce the builds.
 
 | Component | Version | Declared license / role |
 | --- | --- | --- |
@@ -8,7 +8,8 @@ Reviewed installed metadata and lockfiles on 2026-10-15. Direct JavaScript depen
 | Express | 5.3.0 | MIT; API/server |
 | PGlite | 0.5.10 | Apache-2.0; embedded PostgreSQL |
 | pg | 8.23.1 | MIT; optional hosted PostgreSQL |
-| jose | 6.2.12 | MIT; signed webhook verification |
+| jose | 6.2.12 | MIT; Google ID-token and signed webhook verification |
+| @vercel/functions | 3.10.1 | Apache-2.0; hosted database pool lifecycle |
 | Papa Parse | 5.7.0 | MIT; CSV parser |
 | Zod | 4.6.7 | MIT; shared schema validation |
 | Lucide React | 1.57.0 | ISC; icons |

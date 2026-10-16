@@ -8,7 +8,7 @@ import {
   type State,
   type Transaction,
   type Kind,
-} from './core';
+} from './core.js';
 export type Mapping = {
   date: string;
   name: string;

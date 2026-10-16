@@ -40,12 +40,54 @@ private enum NativeStoreTests {
     try expect(store.mode.isEmpty, "Harness must start without a saved native workspace")
     let demo = try store.engine.call("createDemo", ["2026-10-15"]) as? JSON ?? [:]
     try expect(!demo.isEmpty, "Production calculation engine must load from the temporary bundle")
+    try checkGoogleSignIn()
     try checkIdentitiesAndTransactions(store: store, demo: demo)
     try checkFiltersAndPaging(store: store, demo: demo)
     try checkInvalidation(store: store, demo: demo)
     try measureLargeLedger(store: store, demo: demo)
     print(
-      "PASS: \(checks) native Store identity, filtering, paging, and cache invalidation checks.")
+      "PASS: \(checks) native sign-in, Store identity, filtering, paging, and cache invalidation checks."
+    )
+  }
+
+  private static func checkGoogleSignIn() throws {
+    let verifier = try GoogleSignIn.verifier()
+    let second = try GoogleSignIn.verifier()
+    let allowed = CharacterSet(
+      charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_")
+    try expect(
+      verifier.count == 43 && verifier.unicodeScalars.allSatisfy(allowed.contains),
+      "PKCE verifier is 32 random bytes encoded as unpadded base64url")
+    try expect(verifier != second, "Every Google sign-in receives a new verifier")
+    try expect(
+      GoogleSignIn.challenge(for: "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk")
+        == "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
+      "PKCE S256 challenge matches the RFC 7636 reference vector")
+    let code = try GoogleSignIn.callbackCode(
+      from: URL(string: "org.gtfol.asset://auth/callback?code=one-time_code")!)
+    try expect(code == "one-time_code", "Exact callback returns its one-time exchange code")
+    for invalid in [
+      "org.gtfol.asset://auth/callback?error=auth_failed",
+      "org.gtfol.asset://auth/callback?code=one&error=auth_failed",
+      "org.gtfol.asset://auth/callback?token=bearer",
+      "org.gtfol.asset://auth/callback?code=one&token=bearer",
+      "org.gtfol.asset://auth/callback?code=one&code=two",
+      "org.gtfol.asset://auth/callback?code=",
+      "org.gtfol.asset://auth/callback",
+      "other://auth/callback?code=one",
+      "org.gtfol.asset://other/callback?code=one",
+      "org.gtfol.asset://auth/other?code=one",
+      "org.gtfol.asset://auth/callback?code=one#token=bearer",
+      "org.gtfol.asset://user@auth/callback?code=one",
+      "org.gtfol.asset://auth:123/callback?code=one",
+    ] {
+      var rejected = false
+      do { _ = try GoogleSignIn.callbackCode(from: URL(string: invalid)!) } catch {
+        rejected = true
+      }
+      try expect(
+        rejected, "Invalid, ambiguous, or token-bearing callback must be rejected: \(invalid)")
+    }
   }
 
   private static func checkIdentitiesAndTransactions(store: Store, demo: JSON) throws {

@@ -1,17 +1,10 @@
 import express from 'express';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { applyCommand, backup, emptyState, validateState, type Command } from '../shared/core';
-import { createDemo } from '../shared/demo';
-import { getState, mutateState, type Database } from './db';
-import {
-  authenticated,
-  newSession,
-  passwordHash,
-  passwordMatches,
-  readToken,
-  tokenHash,
-} from './auth';
+import { applyCommand, backup, validateState, type Command } from '../shared/core.js';
+import { createDemo } from '../shared/demo.js';
+import { getState, mutateState, type Database } from './db.js';
+import { authenticated, newSession, readToken, tokenHash } from './auth.js';
 import {
   PlaidSandbox,
   PlaidError,
@@ -25,10 +18,17 @@ import {
   disconnect,
   decryptToken,
   type PlaidProvider,
-} from './plaid';
-export function createApp(db: Database, provider: PlaidProvider = new PlaidSandbox()) {
+} from './plaid.js';
+import { acceptedOrigins, jsonBodyLimit } from './hosting.js';
+import { googleRoutes, GoogleOAuth, type GoogleProvider } from './google.js';
+export function createApp(
+  db: Database,
+  provider: PlaidProvider = new PlaidSandbox(),
+  google: GoogleProvider = new GoogleOAuth(),
+) {
   const app = express();
   app.disable('x-powered-by');
+  if (process.env.VERCEL === '1') app.set('trust proxy', 1);
   const limits = new Map<string, { count: number; until: number }>();
   app.use((req, res, next) => {
     res.setHeader('X-Content-Type-Options', 'nosniff');
@@ -52,15 +52,14 @@ export function createApp(db: Database, provider: PlaidProvider = new PlaidSandb
       res.status(202).json({ accepted: true });
     },
   );
-  app.use('/api', express.json({ limit: '12mb' }));
+  app.use('/api', express.json({ limit: jsonBodyLimit() }));
   app.use('/api', (req, res, next) => {
     if (req.method === 'GET') {
       next();
       return;
     }
     const origin = req.header('origin');
-    const allowed = process.env.APP_ORIGIN ?? `http://localhost:${process.env.PORT ?? 4317}`;
-    if (origin && origin !== allowed && origin !== allowed.replace('localhost', '127.0.0.1')) {
+    if (origin && !acceptedOrigins().has(origin)) {
       res.status(403).json({ error: 'Origin not allowed' });
       return;
     }
@@ -103,52 +102,9 @@ export function createApp(db: Database, provider: PlaidProvider = new PlaidSandb
     const token = await newSession(db, id, res);
     res.json({ ...(req.header('x-asset-client') === 'ios' ? { token } : {}), demo: true });
   });
-  app.post('/api/auth/register', async (req, res) => {
-    const { email, password } = z
-      .object({ email: z.email().max(254), password: z.string().min(12).max(200) })
-      .parse(req.body);
-    const id = randomUUID(),
-      state = emptyState();
-    state.categories = createDemo().categories;
-    const hash = await passwordHash(password);
-    try {
-      await db.transaction(async (tx) => {
-        await tx.query('INSERT INTO users(id,email,password_hash) VALUES($1,$2,$3)', [
-          id,
-          email.toLowerCase(),
-          hash,
-        ]);
-        await tx.query('INSERT INTO workspaces(owner_id,state) VALUES($1,$2)', [
-          id,
-          JSON.stringify(state),
-        ]);
-      });
-    } catch {
-      res.status(409).json({ error: 'Account could not be created. Try signing in.' });
-      return;
-    }
-    const token = await newSession(db, id, res);
-    res.json(req.header('x-asset-client') === 'ios' ? { token } : {});
-  });
-  app.post('/api/auth/login', async (req, res) => {
-    const { email, password } = z
-      .object({ email: z.string().max(254), password: z.string().max(200) })
-      .parse(req.body);
-    const user = (
-      await db.query('SELECT id,password_hash FROM users WHERE email=$1 AND demo=false', [
-        email.toLowerCase(),
-      ])
-    ).rows[0];
-    const ok = await passwordMatches(
-      password,
-      user?.password_hash ?? '00000000000000000000000000000000:' + '0'.repeat(128),
-    );
-    if (!user || !ok) {
-      res.status(401).json({ error: 'Email or password is incorrect' });
-      return;
-    }
-    const token = await newSession(db, user.id, res);
-    res.json(req.header('x-asset-client') === 'ios' ? { token } : {});
+  app.use('/api/auth', googleRoutes(db, google));
+  app.all(['/api/auth/login', '/api/auth/register'], (_req, res) => {
+    res.status(410).json({ error: 'Email sign-in is no longer supported. Continue with Google.' });
   });
   app.use('/api', authenticated(db));
   app.post('/api/auth/logout', async (req, res) => {
@@ -163,7 +119,8 @@ export function createApp(db: Database, provider: PlaidProvider = new PlaidSandb
       plaidConfigured: !!(
         process.env.PLAID_CLIENT_ID &&
         process.env.PLAID_SECRET &&
-        process.env.TOKEN_ENCRYPTION_KEY
+        process.env.TOKEN_ENCRYPTION_KEY &&
+        (process.env.VERCEL !== '1' || process.env.PLAID_WORKER_ENABLED === 'true')
       ),
     }),
   );
@@ -197,6 +154,13 @@ export function createApp(db: Database, provider: PlaidProvider = new PlaidSandb
     const { state } = await getState(db, res.locals.owner);
     res.setHeader('Content-Disposition', 'attachment; filename="asset-backup.json"');
     res.json(backup(state));
+  });
+  app.use('/api/plaid', (_req, res, next) => {
+    if (process.env.VERCEL === '1' && process.env.PLAID_WORKER_ENABLED !== 'true') {
+      res.status(503).json({ error: 'Bank connections are not available on this deployment yet.' });
+      return;
+    }
+    next();
   });
   app.post('/api/plaid/link-token', async (req, res) => {
     const p = z
@@ -293,16 +257,14 @@ export function createApp(db: Database, provider: PlaidProvider = new PlaidSandb
         next(error);
         return;
       }
-      res
-        .status(error.status ?? (error instanceof PlaidError ? 503 : 400))
-        .json({
-          error:
-            error instanceof z.ZodError
-              ? error.issues.map((x) => x.message).join('; ')
-              : error instanceof PlaidError
-                ? error.code
-                : (error.message ?? 'Request failed'),
-        });
+      res.status(error.status ?? (error instanceof PlaidError ? 503 : 400)).json({
+        error:
+          error instanceof z.ZodError
+            ? error.issues.map((x) => x.message).join('; ')
+            : error instanceof PlaidError
+              ? error.code
+              : (error.message ?? 'Request failed'),
+      });
     },
   );
   return app;

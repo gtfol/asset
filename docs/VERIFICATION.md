@@ -1,25 +1,33 @@
 # Verification record
 
-October 15–16, 2026. Web and native automated checks and builds were re-run October 16 after moving to the Capsule-style repository layout. Final native transaction interaction checks completed October 16 before the folder move. This is a working local web/native implementation, not a published service. All financial values in the screenshots and automated tests are synthetic. No private banks, paid services, or Production connections were accessed.
+October 15–16, 2026. Web and native automated checks and builds were re-run October 16 after moving to the Capsule-style repository layout. Final native transaction interaction checks completed October 16 before the folder move. The web frontend is published at asset.gtfol.dev; API deployment verification is in progress. The native app remains a local simulator build. All financial values in the screenshots and automated tests are synthetic. No private banks, paid services, or Production connections were accessed.
 
 ## Build and automated results
 
 | Check | Result |
 | --- | --- |
-| `npm test` in `apps/web` | **42/42 passing**, three suites. Calculation, CSV/backup, persisted state, owner isolation, native bearer-session revocation, Plaid fixtures, and transaction browsing regressions. Re-run after the repository move. |
+| `npm test` in `apps/web` | **58/58 passing**, five suites. Calculation, CSV/backup, persisted state, owner isolation, native bearer-session revocation, Plaid fixtures, and transaction browsing regressions. Re-run after Google authentication and Vercel API changes. |
 | `npm run build` in `apps/web` | **Pass.** TypeScript check and Vite production bundle. Web JavaScript approximately 438 KB / 131 KB gzip. A separate fresh install/build containing only the web directory also passed. |
 | `npm run native:check` in `apps/web` | **Pass.** The checked-in native engine, fonts, and license notices match their web sources. This check is separate from the web build. |
 | `node scripts/native-parity.mjs` in `apps/ios` | **Pass.** Node and JavaScriptCore agree on Dashboard, Cash Flow, net worth, holdings, edit propagation, CSV preview, and full backup restoration. No web dependencies are needed by this native runner. |
-| `node scripts/native-store-tests.mjs` in `apps/ios` | **Pass, 48 checks.** Compiles production Store.swift with the checked-in shared engine in a temporary bundle. Covers identities, deterministic order, filters, date groups, paging, state replacement, nested mutations, and cache invalidation without reading or writing an app workspace. |
+| `node scripts/native-store-tests.mjs` in `apps/ios` | **Pass, 65 checks.** Compiles production Store.swift with the checked-in shared engine in a temporary bundle. Covers identities, deterministic order, filters, date groups, paging, state replacement, nested mutations, cache invalidation, Google PKCE vectors, and native callback validation without reading or writing an app workspace. |
 | Xcode simulator build | **Pass.** SwiftUI/Charts, iOS 18 minimum target, official LinkKit 7.2.2; built using Xcode 26.6 / iOS 26.5 SDK without distribution signing. The project at `apps/ios/Asset.xcodeproj` builds with self-contained fonts and resources. The preceding transaction-performance build was installed on iPhone 17 Pro and iPad mini; loading/filter/selection/review checks and final date-header inspection passed October 16. |
 | `npm audit` | **0 vulnerabilities** in the checked lockfile on October 15. |
 | Container build | **Not verified.** Docker is installed but its daemon was unavailable. |
 | Plaid Sandbox | **Code and provider fixtures verified; live execution unverified.** Credentials have not been configured. |
-| Native OAuth / physical device | **Unverified.** Requires approved server/domain, associated domains, team signing, and Sandbox configuration. |
+| Plaid native OAuth / physical device | **Unverified.** Requires approved server/domain, associated domains, team signing, and Sandbox configuration. |
 
 The calculation suite covers integer cents, invalid dates/references, split conservation and category-part totals, refunds, transfers, pending records, excluded spending, currency separation, scoped review, merchant rules, monthly budget isolation, archived categories, timezones/DST, leap days, projection edge cases, missing coverage, partial-period comparisons, annual reconciliation, debt signs, stale/missing holdings, CSV duplicates, and full-state restoration. Import regressions verify that manual name/date edits and merchant-rule renames do not create duplicate imports, and that unrelated rows matching an edited display name remain distinct.
 
 Provider tests cover authenticated token encryption, ES256/body/timestamp verification, pagination mutation restart, partial-failure cursor rollback, repeat/out-of-order webhook jobs, 730-day initialization, pending-to-posted replacement, modified/removed records, manual correction preservation, exact manual overlap, split conflicts, duplicate Items, product selection, reauthentication, changed account selection, separate investment pagination, missing quotes, snapshots, update events, disconnect, persistence reopening, stale writes, and cross-owner denial. These use fixtures, not a live institution.
+
+## Google authentication and Vercel API
+
+October 16: email/password forms and server sign-in routes were removed. Google OAuth uses the direct `https://asset.gtfol.dev/api/auth/callback/google` callback. Google ID tokens are verified with Google's signing keys, issuer, audience, expiration, authorized party, verified email, and flow nonce. Browser state cookies and server-side PKCE protect callback completion; iOS exchanges a one-time code using an independent PKCE verifier. Workspaces map by Google subject and never merge solely by email. The native browser flow handles cancellation and workspace changes; Keychain replacement preserves the old credential when a replacement fails.
+
+The current `@vercel/node` builder was run independently against the app. Its emitted Node 24 function booted and passed demo creation, session-cookie creation, authenticated populated state, and missing-database recovery checks. All migration files were included. Runtime ESM imports and explicit TypeScript type roots were checked in the emitted artifact. The full Google provider round trip remains pending live credentials and user sign-in.
+
+Vercel requests and responses have a 4 MB application guard below the platform limit. Oversized state is rejected before commit. The persistent Node deployment retains its existing larger limit. Plaid routes are disabled on Vercel unless an independently operating worker is explicitly configured.
 
 ## Code review corrections
 
@@ -45,7 +53,7 @@ CSV deduplication now uses original import identity through edits, merchant rule
 
 ### Repository layout follow-up
 
-The repository now follows Capsule's `apps/web` and `apps/ios` organization, with app-specific READMEs and separate CI workflows. The web package and lockfile live entirely in `apps/web`; Xcode, native resources, scripts, and tests live in `apps/ios`. Vercel's Root Directory is `apps/web`, though its API/worker deployment remains unconfigured. The migration does not move secrets or existing local databases. See [migration notes](repository-migration.md).
+The repository now follows Capsule's `apps/web` and `apps/ios` organization, with app-specific READMEs and separate CI workflows. The web package and lockfile live entirely in `apps/web`; Xcode, native resources, scripts, and tests live in `apps/ios`. Vercel's Root Directory is `apps/web`. The web package now includes an API function and automatic migrations; the continuous Plaid worker still requires separate hosting. The migration does not move secrets or existing local databases. See [migration notes](repository-migration.md).
 
 The web app passed a fresh isolated install/build without sibling iOS files. Native calculation parity, all 48 store regressions, and the relocated Xcode simulator build passed. The native view extraction and moved Store/screens were compared against the previous commit and preserve the original implementation. Relative documentation links resolve, and native-resource freshness checks pass. Earlier rendered screenshots below remain the visual record; this restructure changes build paths and file organization.
 
@@ -109,5 +117,5 @@ Current iPad screenshots: portrait [Dashboard](screenshots/ipad-dashboard.png), 
 - gtfol Lato typography, white/black canvas, open sections, plain monochrome navigation, line icons, thin dividers, and restrained blue charts replace Copilot's surface treatment at the user's direction. Emoji badges and colored navigation borders are excluded.
 - Projection is Asset's disclosed `spend × days in month ÷ days elapsed`, separate from ideal pace. It is not a proprietary Copilot algorithm. No recurring engine exists; expected future bills have not been deducted.
 - Cash Flow is calendar Month/Year only. Unsupported portfolio return and missing pre-link valuation history are explicitly unavailable. No live quotes, trading, AI, goals, recurring management, or subscription tracker.
-- Local manual/CSV/demo use needs no Supabase or Vercel project. Bank sync needs protected Sandbox credentials and an approved HTTPS backend/webhook; shared phone/web use needs the same authenticated server. The current durable worker is not configured as a Vercel-only request function.
+- Local manual/CSV/demo use needs no Supabase or Vercel project. Bank sync needs protected Sandbox credentials and an approved HTTPS backend/webhook; shared phone/web use needs the same authenticated server. The durable Plaid worker is not a Vercel request function; provider routes remain disabled on Vercel until a worker is configured.
 - Production, native OAuth, hosted storage, physical-device signing, Docker runtime, and public deployment remain unverified. See [PLAID.md](PLAID.md). Source publication does not deploy the app or upload a TestFlight build. The project license remains proposed for owner review.

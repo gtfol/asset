@@ -65,6 +65,13 @@ export async function api(path: string, body?: unknown) {
     headers: { 'content-type': 'application/json', 'x-asset-client': 'web' },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
+  if (!res.headers.get('content-type')?.includes('application/json')) {
+    throw Error(
+      res.status === 413
+        ? 'This request is too large for the hosted app. Try a smaller import.'
+        : 'Asset could not reach its server. Please try again shortly.',
+    );
+  }
   const data = await res.json();
   if (!res.ok) throw Object.assign(Error(data.error ?? 'Request failed'), { status: res.status });
   return data;
@@ -631,15 +638,27 @@ export function App() {
   );
 }
 function Welcome({ onReady }: { onReady: () => Promise<void> }) {
-  const [mode, setMode] = useState('login'),
-    [error, setError] = useState(''),
+  const [error, setError] = useState(() =>
+      new URLSearchParams(window.location.search).has('auth_error')
+        ? 'Google sign-in was not completed. Please try again.'
+        : '',
+    ),
     [busy, setBusy] = useState(false);
-  async function go(path: string, data: unknown) {
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).has('auth_error'))
+      window.history.replaceState(null, '', window.location.pathname);
+  }, []);
+  async function go(google: boolean) {
     setBusy(true);
     setError('');
     try {
-      await api('/auth/' + path, data);
-      await onReady();
+      if (google) {
+        const { url } = await api('/auth/google/start', {});
+        window.location.assign(url);
+      } else {
+        await api('/auth/demo', {});
+        await onReady();
+      }
     } catch (e: any) {
       setError(e.message);
     } finally {
@@ -651,48 +670,20 @@ function Welcome({ onReady }: { onReady: () => Promise<void> }) {
       <div className="welcome-card">
         <h1 className="brand">asset</h1>
         <p>Track spending, budgets, accounts, and investments.</p>
-        <button className="primary full" disabled={busy} onClick={() => void go('demo', {})}>
+        <button className="primary full" disabled={busy} onClick={() => void go(true)}>
+          {busy ? 'Opening…' : 'Continue with Google'}
+        </button>
+        <p className="tiny muted">Your private workspace, across your devices.</p>
+        <div className="divider" />
+        <button className="border-button full" disabled={busy} onClick={() => void go(false)}>
           Explore the demo
         </button>
-        <p className="tiny muted">Realistic synthetic data. No bank connection needed.</p>
-        <div className="divider" />
-        <h3>{mode === 'login' ? 'Open your private workspace' : 'Create a private workspace'}</h3>
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            const f = new FormData(e.currentTarget);
-            void go(mode, { email: f.get('email'), password: f.get('password') });
-          }}
-        >
-          <label>
-            Email
-            <input name="email" type="email" autoComplete="username" required />
-          </label>
-          <label>
-            Password
-            <input
-              name="password"
-              type="password"
-              minLength={mode === 'register' ? 12 : 1}
-              autoComplete={mode === 'register' ? 'new-password' : 'current-password'}
-              required
-            />
-          </label>
-          {error && (
-            <p role="alert" className="negative">
-              {error}
-            </p>
-          )}
-          <button className="border-button full" disabled={busy}>
-            {busy ? 'Opening…' : mode === 'login' ? 'Sign in' : 'Create workspace'}
-          </button>
-        </form>
-        <button
-          className="text-button"
-          onClick={() => setMode(mode === 'login' ? 'register' : 'login')}
-        >
-          {mode === 'login' ? 'New here? Create a workspace' : 'Already have a workspace? Sign in'}
-        </button>
+        <p className="tiny muted">Sample data. No bank connection needed.</p>
+        {error && (
+          <p role="alert" className="negative">
+            {error}
+          </p>
+        )}
       </div>
     </div>
   );

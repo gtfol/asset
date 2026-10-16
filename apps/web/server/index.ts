@@ -1,9 +1,9 @@
 import express from 'express';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { openDatabase } from './db';
-import { createApp } from './app';
-import { PlaidSandbox, processJob } from './plaid';
+import { openDatabase } from './db.js';
+import { createApp } from './app.js';
+import { PlaidSandbox, processJob } from './plaid.js';
 const root = fileURLToPath(new URL('..', import.meta.url));
 const db = await openDatabase(),
   provider = new PlaidSandbox(),

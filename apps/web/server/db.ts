@@ -1,7 +1,9 @@
 import { PGlite } from '@electric-sql/pglite';
+import { attachDatabasePool } from '@vercel/functions';
 import pg from 'pg';
-import { readFile, mkdir } from 'node:fs/promises';
-import { validateState, type State } from '../shared/core';
+import { readFile, readdir, mkdir } from 'node:fs/promises';
+import { validateState, type State } from '../shared/core.js';
+import { assertHostedPayloadSize } from './hosting.js';
 export interface SQL {
   query<T = any>(sql: string, params?: unknown[]): Promise<{ rows: T[] }>;
 }
@@ -9,26 +11,92 @@ export interface Database extends SQL {
   transaction<T>(fn: (tx: SQL) => Promise<T>): Promise<T>;
   close(): Promise<void>;
 }
+export function databasePoolOptions(connectionString: string): pg.PoolConfig {
+  const url = new URL(connectionString);
+  if (url.hostname.endsWith('.supabase.co') || url.hostname.endsWith('.pooler.supabase.com'))
+    url.searchParams.set('sslmode', 'verify-full');
+  return {
+    connectionString: url.toString(),
+    max: process.env.VERCEL === '1' ? 2 : 5,
+    connectionTimeoutMillis: 10000,
+    idleTimeoutMillis: 5000,
+    allowExitOnIdle: true,
+  };
+}
+
+type Migration = { version: number; sql: string };
+
+async function readMigrations(): Promise<Migration[]> {
+  const directory = new URL('./migrations/', import.meta.url);
+  const files = (await readdir(directory)).filter((file) => /^\d+_[\w-]+\.sql$/.test(file));
+  const migrations = await Promise.all(
+    files.map(async (file) => ({
+      version: Number(file.split('_')[0]),
+      sql: await readFile(new URL(file, directory), 'utf8'),
+    })),
+  );
+  migrations.sort((a, b) => a.version - b.version);
+  if (
+    !migrations.length ||
+    new Set(migrations.map((migration) => migration.version)).size !== migrations.length
+  )
+    throw Error('Database migrations are missing or have duplicate versions');
+  return migrations;
+}
+
+export async function migrateDatabase(db: Database, migrations: Migration[], remote: boolean) {
+  await db.transaction(async (tx) => {
+    // Transaction locks remain on one pooled connection, including Supabase transaction mode.
+    if (remote) await tx.query('SELECT pg_advisory_xact_lock($1,$2)', [1095979860, 1296648018]);
+    await tx.query(
+      'CREATE TABLE IF NOT EXISTS schema_migrations(version integer PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())',
+    );
+    const applied = new Set(
+      (await tx.query<{ version: number }>('SELECT version FROM schema_migrations')).rows.map(
+        ({ version }) => version,
+      ),
+    );
+    for (const migration of migrations) {
+      if (applied.has(migration.version)) continue;
+      for (const statement of migration.sql.replace(/^--.*$/gm, '').split(';'))
+        if (statement.trim()) await tx.query(statement);
+      await tx.query('INSERT INTO schema_migrations(version) VALUES($1) ON CONFLICT DO NOTHING', [
+        migration.version,
+      ]);
+    }
+  });
+}
+
 export async function openDatabase(
   path = process.env.DATA_DIR ?? '.data/postgres',
 ): Promise<Database> {
   let db: Database;
-  if (process.env.DATABASE_URL) {
-    const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL, max: 5 });
+  const connectionString = process.env.DATABASE_URL;
+  if (process.env.VERCEL === '1' && !connectionString)
+    throw Error('DATABASE_URL is required for hosted storage');
+  if (connectionString) {
+    const pool = new pg.Pool(databasePoolOptions(connectionString));
+    pool.on('error', () => console.error('An idle database connection closed unexpectedly'));
+    if (process.env.VERCEL === '1') attachDatabasePool(pool);
     db = {
       query: async (sql, p) => (await pool.query(sql, p)) as any,
       transaction: async (fn) => {
         const c = await pool.connect();
+        let discard = false;
         try {
           await c.query('BEGIN');
           const out = await fn({ query: async (sql, p) => (await c.query(sql, p)) as any });
           await c.query('COMMIT');
           return out;
         } catch (e) {
-          await c.query('ROLLBACK');
+          try {
+            await c.query('ROLLBACK');
+          } catch {
+            discard = true;
+          }
           throw e;
         } finally {
-          c.release();
+          c.release(discard);
         }
       },
       close: () => pool.end(),
@@ -43,13 +111,13 @@ export async function openDatabase(
       close: () => local.close(),
     };
   }
-  for (const statement of (
-    await readFile(new URL('./migrations/001_initial.sql', import.meta.url), 'utf8')
-  )
-    .replace(/^--.*$/gm, '')
-    .split(';'))
-    if (statement.trim()) await db.query(statement);
-  return db;
+  try {
+    await migrateDatabase(db, await readMigrations(), !!connectionString);
+    return db;
+  } catch (error) {
+    await db.close().catch(() => {});
+    throw error;
+  }
 }
 export async function getState(db: SQL, owner: string) {
   const r = await db.query<{ state: State; revision: number }>(
@@ -77,6 +145,7 @@ export async function mutateState(
         status: 409,
       });
     const next = validateState(await fn(validateState(row.state), tx));
+    assertHostedPayloadSize(next);
     await tx.query(
       'UPDATE workspaces SET state=$1,revision=revision+1,updated_at=now() WHERE owner_id=$2',
       [JSON.stringify(next), owner],

@@ -106,7 +106,7 @@ struct WelcomeView: View {
           .controlSize(.large).tint(.assetText).foregroundStyle(Color.assetBackground)
         Button("Start a private local workspace") { store.openLocal(demo: false) }
           .buttonStyle(.plain).frame(minHeight: 44)
-        Button("Sign in to your Asset server") { connect = true }
+        Button("Sign in with Google") { connect = true }
           .buttonStyle(.plain).frame(minHeight: 44)
         Text(
           "The demo uses synthetic data. Local workspaces stay on this device until you export them."

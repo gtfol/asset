@@ -24,6 +24,9 @@ import {
 } from '../server/plaid';
 import { openDatabase, getState, mutateState, type Database } from '../server/db';
 import { createApp } from '../server/app';
+import { newSession, tokenHash } from '../server/auth';
+import { googleWorkspace } from '../server/google';
+import type { Response } from 'express';
 import { fixture, transaction } from './fixtures';
 import { importFingerprint } from '../shared/core';
 const c: Connection = {
@@ -249,18 +252,11 @@ describe('durable database and authenticated API', () => {
     server = createApp(db, fake).listen(0, '127.0.0.1');
     await once(server, 'listening');
     base = `http://127.0.0.1:${(server.address() as any).port}/api`;
-    tokenA = (
-      await request('/auth/register', undefined, {
-        email: 'a@example.invalid',
-        password: 'fixture-password-a',
-      })
-    ).data.token;
-    tokenB = (
-      await request('/auth/register', undefined, {
-        email: 'b@example.invalid',
-        password: 'fixture-password-b',
-      })
-    ).data.token;
+    const ownerA = await googleWorkspace(db, { id: 'google-a', email: 'a@example.invalid' });
+    const ownerB = await googleWorkspace(db, { id: 'google-b', email: 'b@example.invalid' });
+    const cookies = { cookie() {} } as unknown as Response;
+    tokenA = await newSession(db, ownerA, cookies);
+    tokenB = await newSession(db, ownerB, cookies);
   }, 30000);
   afterAll(async () => {
     await new Promise<void>((resolve) => server.close(() => resolve()));
@@ -280,11 +276,10 @@ describe('durable database and authenticated API', () => {
     ).toBe(409);
   });
   it('revokes the supplied native bearer session without relying on browser cookies', async () => {
-    const login = await request('/auth/login', undefined, {
-      email: 'a@example.invalid',
-      password: 'fixture-password-a',
-    });
-    const session = login.data.token;
+    const owner = (
+      await db.query('SELECT owner_id FROM sessions WHERE token_hash=$1', [tokenHash(tokenA)])
+    ).rows[0].owner_id;
+    const session = await newSession(db, owner, { cookie() {} } as unknown as Response);
     expect((await request('/state', session)).status).toBe(200);
     expect((await request('/auth/logout', session, {})).status).toBe(200);
     expect((await request('/state', session)).status).toBe(401);

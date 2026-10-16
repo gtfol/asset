@@ -101,6 +101,44 @@ func dateToday() -> String {
 }
 func isoNow() -> String { ISO8601DateFormatter().string(from: Date()) }
 
+enum GoogleSignIn {
+  static let defaultServer = "https://asset.gtfol.dev"
+  static let callbackScheme = "org.gtfol.asset"
+
+  private static func base64URL(_ data: Data) -> String {
+    data.base64EncodedString().replacingOccurrences(of: "+", with: "-")
+      .replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
+  }
+
+  static func verifier() throws -> String {
+    var bytes = [UInt8](repeating: 0, count: 32)
+    guard SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes) == errSecSuccess else {
+      throw failure("Unable to start secure sign-in. Please try again.")
+    }
+    return base64URL(Data(bytes))
+  }
+
+  static func challenge(for verifier: String) -> String {
+    base64URL(Data(SHA256.hash(data: Data(verifier.utf8))))
+  }
+
+  static func callbackCode(from url: URL) throws -> String {
+    guard let parts = URLComponents(url: url, resolvingAgainstBaseURL: false),
+      parts.scheme == callbackScheme, parts.host == "auth", parts.path == "/callback",
+      parts.user == nil, parts.password == nil, parts.port == nil, parts.fragment == nil
+    else { throw failure("Google sign-in returned an invalid response. Please try again.") }
+    let items = parts.queryItems ?? []
+    guard !items.contains(where: { $0.name == "error" }) else {
+      throw failure("Google sign-in could not be completed. Please try again.")
+    }
+    let codes = items.filter { $0.name == "code" }
+    guard codes.count == 1, let code = codes.first?.value, !code.isEmpty,
+      items.allSatisfy({ $0.name == "code" })
+    else { throw failure("Google sign-in did not return a code. Please try again.") }
+    return code
+  }
+}
+
 @MainActor final class Engine {
   private let context = JSContext()!
   private var exception: String?
@@ -138,12 +176,23 @@ enum SessionKey {
     return String(data: d, encoding: .utf8)
   }
   static func save(_ token: String?) throws {
-    SecItemDelete(base as CFDictionary)
-    guard let token else { return }
-    var q = base
-    q[kSecValueData as String] = Data(token.utf8)
-    q[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
-    guard SecItemAdd(q as CFDictionary, nil) == errSecSuccess else {
+    guard let token else {
+      let status = SecItemDelete(base as CFDictionary)
+      guard status == errSecSuccess || status == errSecItemNotFound else {
+        throw failure("Unable to clear the saved session")
+      }
+      return
+    }
+    let attributes: JSON = [
+      kSecValueData as String: Data(token.utf8),
+      kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
+    ]
+    var status = SecItemUpdate(base as CFDictionary, attributes as CFDictionary)
+    if status == errSecItemNotFound {
+      let item = base.merging(attributes) { _, new in new }
+      status = SecItemAdd(item as CFDictionary, nil)
+    }
+    guard status == errSecSuccess else {
       throw failure("Unable to store session securely")
     }
   }
@@ -179,7 +228,9 @@ enum SessionKey {
     configuration.httpShouldSetCookies = false
     return URLSession(configuration: configuration)
   }()
-  var baseURL: String { UserDefaults.standard.string(forKey: "server") ?? "http://localhost:4317" }
+  var baseURL: String {
+    UserDefaults.standard.string(forKey: "server") ?? GoogleSignIn.defaultServer
+  }
   var row: Row { Row(state) }
   var currency: String { row.object("settings").text("currency", "USD") }
   var isDemo: Bool { row.object("settings").flag("demo") }
@@ -296,7 +347,7 @@ enum SessionKey {
     req.httpMethod = body == nil ? "GET" : "POST"
     req.setValue("application/json", forHTTPHeaderField: "Content-Type")
     req.setValue("ios", forHTTPHeaderField: "x-asset-client")
-    if !["/auth/login", "/auth/register", "/auth/demo"].contains(path),
+    if !["/auth/google/start", "/auth/google/exchange"].contains(path),
       let credential = token ?? SessionKey.read()
     {
       req.setValue("Bearer " + credential, forHTTPHeaderField: "Authorization")
@@ -334,18 +385,44 @@ enum SessionKey {
       self.error = "Could not refresh. Showing saved data. \(error.localizedDescription)"
     }
   }
-  func login(server: String, email: String, password: String, register: Bool) async throws {
+  func signInWithGoogle(
+    server: String, authenticate: @MainActor (URL) async throws -> URL
+  ) async throws {
     workspaceGeneration += 1
     let generation = workspaceGeneration
     let address = server.trimmingCharacters(in: .whitespacesAndNewlines)
       .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-    let login = try await request(
-      register ? "/auth/register" : "/auth/login", body: ["email": email, "password": password],
+    let verifier = try GoogleSignIn.verifier()
+    let start = try await request(
+      "/auth/google/start",
+      body: ["client": "ios", "challenge": GoogleSignIn.challenge(for: verifier)],
       server: address)
-    guard let token = login["token"] as? String else {
+    try Task.checkCancellation()
+    guard generation == workspaceGeneration else {
+      throw failure("Workspace changed during sign-in")
+    }
+    guard let value = start["url"] as? String, let url = URL(string: value),
+      url.host != nil, url.user == nil, url.password == nil,
+      url.scheme == "https"
+        || (url.scheme == "http" && ["localhost", "127.0.0.1"].contains(url.host ?? ""))
+    else { throw failure("Server did not provide a secure Google sign-in address") }
+    let callback = try await authenticate(url)
+    try Task.checkCancellation()
+    guard generation == workspaceGeneration else {
+      throw failure("Workspace changed during sign-in")
+    }
+    let code = try GoogleSignIn.callbackCode(from: callback)
+    let login = try await request(
+      "/auth/google/exchange", body: ["code": code, "verifier": verifier], server: address)
+    try Task.checkCancellation()
+    guard generation == workspaceGeneration else {
+      throw failure("Workspace changed during sign-in")
+    }
+    guard let token = login["token"] as? String, !token.isEmpty else {
       throw failure("Server did not issue a session")
     }
     let result = try await request("/state", server: address, token: token)
+    try Task.checkCancellation()
     guard generation == workspaceGeneration else {
       throw failure("Workspace changed during sign-in")
     }

@@ -16,6 +16,12 @@ xcodebuild -project Asset.xcodeproj -scheme Asset \
 
 The bundle identifier is `org.gtfol.asset`; the deployment target is iOS 18. The local demo and private workspace work without a server. Shared workspaces use the web app's server API. Real bank connections are not enabled; Plaid is limited to Sandbox.
 
+## Google sign-in
+
+Google is the only account sign-in method. The default backend is `https://asset.gtfol.dev`; the sign-in sheet also accepts a self-hosted HTTPS Asset server. HTTP localhost is available for simulator development. Demo and private local workspaces remain available without an account.
+
+The app creates an in-memory random PKCE verifier and sends its SHA-256 challenge to `POST /api/auth/google/start` with `client: "ios"`. A system `ASWebAuthenticationSession` opens the returned URL and receives `org.gtfol.asset://auth/callback?code=…`. Only the one-time code is accepted in this callback. The app exchanges that code and the verifier at `POST /api/auth/google/exchange`, loads the workspace, then stores the bearer session in Keychain. Cancelling the sheet or changing workspace prevents a pending sign-in from replacing local state. The browser flow requires Google OAuth configuration on the server; the app has no Google client secret.
+
 ## Source layout
 
 - `Asset/AssetApp.swift` — app entry point and appearance environment.
@@ -34,7 +40,7 @@ node scripts/native-parity.mjs
 node scripts/native-store-tests.mjs
 ```
 
-The first command checks that Node and JavaScriptCore produce identical results from the bundled engine for calculations, edits, imports, and backup restoration. The second compiles the production Store with its regression harness, including cache invalidation, filtering, paging, and a large ledger. Both commands use temporary directories and the checked-in engine. They can also be invoked by absolute path from another working directory.
+The first command checks that Node and JavaScriptCore produce identical results from the bundled engine for calculations, edits, imports, and backup restoration. The second compiles the production Store with its regression harness, including PKCE and callback validation, cache invalidation, filtering, paging, and a large ledger. Both commands use temporary directories and the checked-in engine. They can also be invoked by absolute path from another working directory.
 
 These checks validate the bundled engine. Freshness against the authoritative shared TypeScript sources is checked separately below.
 

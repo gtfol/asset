@@ -16,48 +16,59 @@ struct SharedFile: Identifiable {
 struct ServerLoginView: View {
   @EnvironmentObject var store: Store
   @SwiftUI.Environment(\.dismiss) var dismiss
-  @State var server = "http://localhost:4317"
-  @State var email = ""
-  @State var password = ""
-  @State var register = false
+  @StateObject private var authentication = GoogleAuthentication()
+  @State private var signInTask: Task<Void, Never>?
+  @State var server = GoogleSignIn.defaultServer
   @State var error = ""
   @State var busy = false
   var body: some View {
     NavigationStack {
       List {
-        Section("Your Asset server") {
-          TextField("HTTPS server address", text: $server).textInputAutocapitalization(.never)
-            .keyboardType(.URL)
-          Text(
-            "A physical iPhone needs an HTTPS server. localhost works in the simulator. Local-only workspaces are kept separate."
-          ).font(.custom("Lato-Regular", size: 13, relativeTo: .caption)).foregroundStyle(
-            Color.assetSecondary)
-        }
         Section {
-          TextField("Email", text: $email).textInputAutocapitalization(.never).keyboardType(
-            .emailAddress
-          ).textContentType(.username)
-          SecureField("Password · at least 12 characters", text: $password).textContentType(
-            register ? .newPassword : .password)
-          Toggle("Create a new account", isOn: $register)
-          Button(busy ? "Connecting…" : register ? "Create account" : "Sign in") {
+          Text("Sign in to sync your workspace across devices.")
+            .foregroundStyle(Color.assetSecondary)
+          Button(busy ? "Signing in…" : "Continue with Google") {
             busy = true
-            Task {
+            error = ""
+            signInTask = Task {
               do {
-                try await store.login(
-                  server: server, email: email, password: password, register: register)
+                try await store.signInWithGoogle(server: server) { url in
+                  try await authentication.authenticate(url)
+                }
                 dismiss()
-              } catch { self.error = error.localizedDescription }
+              } catch is CancellationError {
+              } catch {
+                if !Task.isCancelled { self.error = error.localizedDescription }
+              }
               busy = false
             }
-          }.disabled(busy)
+          }.frame(minHeight: 44).disabled(busy)
+        }
+        Section {
+          DisclosureGroup("Server") {
+            TextField("HTTPS server address", text: $server).textInputAutocapitalization(.never)
+              .autocorrectionDisabled().keyboardType(.URL).disabled(busy)
+            Text("Use asset.gtfol.dev, or enter your own Asset server address.")
+              .font(.custom("Lato-Regular", size: 13, relativeTo: .caption))
+              .foregroundStyle(Color.assetSecondary)
+          }
         }
         if !error.isEmpty { Text(error).foregroundStyle(Color.assetError) }
       }.assetTitle("Connect your workspace").toolbar {
-        ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
-          .quietBackground()
+        ToolbarItem(placement: .cancellationAction) {
+          Button("Cancel") {
+            signInTask?.cancel()
+            authentication.cancel()
+            dismiss()
+          }
+        }
+        .quietBackground()
       }
       .onAppear { server = store.baseURL }
+      .onDisappear {
+        signInTask?.cancel()
+        authentication.cancel()
+      }
     }
   }
 }

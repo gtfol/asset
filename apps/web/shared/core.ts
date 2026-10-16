@@ -15,8 +15,8 @@ import {
   type Transaction,
   type Command,
   type Kind,
-} from './schema';
-export * from './schema';
+} from './schema.js';
+export * from './schema.js';
 export const money = (cents: number | null, currency = 'USD') =>
   cents === null
     ? 'Unavailable'
