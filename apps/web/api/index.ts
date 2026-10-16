@@ -28,7 +28,11 @@ export function createServerlessApp(initialize = initializeApplication): Express
         });
       const ready = await application;
       ready(req, res, next);
-    } catch {
+    } catch (error) {
+      const code = (error as { code?: unknown })?.code;
+      console.error('Asset API initialization failed', {
+        code: typeof code === 'string' && /^[A-Z0-9_]{1,64}$/.test(code) ? code : 'INITIALIZATION_FAILED',
+      });
       res.setHeader('Cache-Control', 'no-store');
       res.setHeader('Retry-After', '5');
       res.status(503).json({ error: 'Service is temporarily unavailable. Try again shortly.' });
