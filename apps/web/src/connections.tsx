@@ -2,6 +2,8 @@ import React, { useEffect, useRef, useState } from 'react';
 import {
   usePlaidLink,
   type PlaidLinkOnSuccessMetadata,
+  type PlaidLinkOnExitMetadata,
+  type PlaidLinkOnEventMetadata,
   type PlaidLinkError,
 } from 'react-plaid-link';
 import { api } from './App';
@@ -11,11 +13,13 @@ import {
   clearPlaidAttempt,
   createPlaidAttempt,
   plaidExitMessage,
+  PlaidLinkDiagnostics,
   plaidRedirect,
   readPlaidAttempt,
   savePlaidAttempt,
   type PlaidAttempt,
   type PlaidProduct,
+  type PlaidErrorDetails,
 } from './plaid-link';
 
 interface PlaidConfig {
@@ -34,12 +38,14 @@ function PlaidButton({
   onOpen,
   onSuccess,
   onExit,
+  onEvent,
 }: {
   attempt: PlaidAttempt;
   redirect?: string;
   onOpen: () => void;
   onSuccess: (token: string | null, metadata: PlaidLinkOnSuccessMetadata) => void;
-  onExit: (error: PlaidLinkError | null) => void;
+  onExit: (error: PlaidLinkError | null, metadata?: PlaidLinkOnExitMetadata) => void;
+  onEvent: (name: string, metadata: PlaidLinkOnEventMetadata) => void;
 }) {
   const opened = useRef(false);
   const launched = useRef(false);
@@ -49,6 +55,7 @@ function PlaidButton({
     receivedRedirectUri: redirect,
     onSuccess,
     onExit,
+    onEvent,
   });
   function launch() {
     if (!ready || opened.current) return;
@@ -126,6 +133,8 @@ export function ConnectionsDialog({
   const [attempt, setAttempt] = useState<PlaidAttempt | null>(resume.attempt);
   const [linkOpen, setLinkOpen] = useState(false);
   const [error, setError] = useState(resume.error);
+  const [errorDetails, setErrorDetails] = useState<PlaidErrorDetails | null>(null);
+  const diagnostics = useRef(new PlaidLinkDiagnostics(resume.attempt?.id));
   const [busy, setBusy] = useState('');
   const [config, setConfig] = useState<PlaidConfig | null>(null);
   const [configLoading, setConfigLoading] = useState(!state.settings.demo);
@@ -153,6 +162,7 @@ export function ConnectionsDialog({
   useEffect(() => {
     let current = true;
     mounted.current = true;
+    diagnostics.current.start(active.current?.id);
     if (receivedRedirectUri) window.history.replaceState(null, '', '/');
     if (!state.settings.demo) {
       void connectionAPI('/plaid/config')
@@ -171,10 +181,13 @@ export function ConnectionsDialog({
     return () => {
       current = false;
       mounted.current = false;
+      diagnostics.current.start();
     };
   }, []);
 
   function discardAttempt() {
+    diagnostics.current.start();
+    setErrorDetails(null);
     active.current = null;
     setLinkOpen(false);
     setAttempt(null);
@@ -191,10 +204,13 @@ export function ConnectionsDialog({
     operating.current = true;
     setBusy(label);
     setError('');
+    setErrorDetails(null);
+    diagnostics.current.start();
     try {
       await action();
     } catch (e: any) {
-      if (mounted.current) setError(e.message);
+      if (mounted.current)
+        setError(plaidExitMessage({ display_message: e.message, error_code: e.message }));
     } finally {
       operating.current = false;
       if (mounted.current) setBusy('');
@@ -231,6 +247,7 @@ export function ConnectionsDialog({
       const next = createPlaidAttempt(result, { sessionId, product: chosenProduct, connectionId });
       savePlaidAttempt(next);
       active.current = next;
+      diagnostics.current.start(next.id);
       setAttempt(next);
     });
   }
@@ -261,10 +278,16 @@ export function ConnectionsDialog({
       }
     });
   }
-  function exit(current: PlaidAttempt, cause: PlaidLinkError | null) {
+  function exit(
+    current: PlaidAttempt,
+    cause: PlaidLinkError | null,
+    metadata?: PlaidLinkOnExitMetadata,
+  ) {
     if (!mounted.current || active.current?.id !== current.id) return;
+    const result = diagnostics.current.finish(current.id, cause, metadata);
     discardAttempt();
-    setError(plaidExitMessage(cause));
+    setError(result?.message ?? plaidExitMessage(cause));
+    setErrorDetails(result?.details ?? null);
   }
 
   return (
@@ -426,7 +449,11 @@ export function ConnectionsDialog({
                     redirect={resume.attempt?.id === attempt.id ? resume.redirect : undefined}
                     onOpen={() => setLinkOpen(true)}
                     onSuccess={(token, metadata) => void complete(attempt, token, metadata)}
-                    onExit={(cause) => exit(attempt, cause)}
+                    onExit={(cause, metadata) => exit(attempt, cause, metadata)}
+                    onEvent={(name, metadata) => {
+                      if (mounted.current && active.current?.id === attempt.id)
+                        diagnostics.current.event(attempt.id, name, metadata);
+                    }}
                   />
                   <button disabled={!!busy} onClick={discardAttempt}>
                     Cancel connection
@@ -574,6 +601,26 @@ export function ConnectionsDialog({
         <p className="form-error" role="alert">
           {error}
         </p>
+      )}
+      {errorDetails && (
+        <details className="original-info">
+          <summary>Details</summary>
+          <p style={{ overflowWrap: 'anywhere' }}>
+            {errorDetails.errorCode && (
+              <>
+                Code: {errorDetails.errorCode}
+                <br />
+              </>
+            )}
+            {errorDetails.requestId && (
+              <>
+                Request ID: {errorDetails.requestId}
+                <br />
+              </>
+            )}
+            {errorDetails.linkSessionId && <>Link session ID: {errorDetails.linkSessionId}</>}
+          </p>
+        </details>
       )}
     </Modal>
   );

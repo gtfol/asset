@@ -131,7 +131,71 @@ export function plaidRedirect(value: string, origin: string): string | undefined
   }
 }
 
-export function plaidExitMessage(error: { display_message?: string | null } | null): string {
+type PlaidExitError = { display_message?: string | null; error_code?: string | null } | null;
+export interface PlaidErrorDetails {
+  errorCode?: string;
+  requestId?: string;
+  linkSessionId?: string;
+}
+
+function diagnosticValue(value: unknown, pattern: RegExp, limit: number) {
+  return typeof value === 'string' && value.length <= limit && pattern.exec(value)?.[0] === value
+    ? value
+    : undefined;
+}
+function errorCode(value: unknown) {
+  return diagnosticValue(value, /^[A-Z][A-Z0-9_]*$/, 96);
+}
+function safeDetails(value: unknown): PlaidErrorDetails {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const fields = value as Record<string, unknown>;
+  const code = errorCode(fields.error_code);
+  const requestId = diagnosticValue(fields.request_id, /^[A-Za-z0-9][A-Za-z0-9_-]*$/, 128);
+  const linkSessionId = diagnosticValue(fields.link_session_id, /^[A-Za-z0-9][A-Za-z0-9_-]*$/, 128);
+  return {
+    ...(code ? { errorCode: code } : {}),
+    ...(requestId ? { requestId } : {}),
+    ...(linkSessionId ? { linkSessionId } : {}),
+  };
+}
+
+// This object lives only in memory. Never retain SDK metadata, which can include bank details.
+export class PlaidLinkDiagnostics {
+  private attemptId?: string;
+  private lastError: PlaidErrorDetails | null = null;
+
+  constructor(attemptId?: string) {
+    this.start(attemptId);
+  }
+  start(attemptId?: string) {
+    this.attemptId = attemptId;
+    this.lastError = null;
+  }
+  event(attemptId: string, name: string, metadata: unknown) {
+    if (attemptId === this.attemptId && name === 'ERROR') this.lastError = safeDetails(metadata);
+  }
+  finish(attemptId: string, error: PlaidExitError, metadata?: unknown) {
+    if (attemptId !== this.attemptId) return;
+    const hadError = !!error || this.lastError !== null;
+    const details = { ...this.lastError, ...safeDetails(metadata) };
+    const code = errorCode(error?.error_code);
+    if (code) details.errorCode = code;
+    this.start();
+    return {
+      message: hadError ? plaidExitMessage(error ?? {}, details.errorCode) : '',
+      details: hadError && Object.keys(details).length ? details : null,
+    };
+  }
+}
+
+export function plaidExitMessage(error: PlaidExitError, previousCode?: string): string {
+  const code = errorCode(error?.error_code) ?? errorCode(previousCode);
+  if (code === 'INVALID_LINK_CUSTOMIZATION')
+    return 'Complete the Data Transparency use case and publish your Link customization in the Plaid Dashboard, then try again. For an existing connection, also check account selection settings.';
+  if (code === 'INSTITUTION_REGISTRATION_REQUIRED')
+    return 'This bank requires registration for your Plaid account. Check its OAuth access requirements in your Plaid Dashboard, then try again after access is enabled.';
+  if (code === 'UNAUTHORIZED_INSTITUTION')
+    return 'Your Plaid account does not currently have access to this bank. Check institution access in your Plaid Dashboard or contact Plaid support.';
   return error
     ? error.display_message || 'The bank connection could not be completed. Please try again.'
     : '';

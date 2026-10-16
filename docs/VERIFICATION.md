@@ -6,7 +6,7 @@ October 15–16, 2026. Web and native automated checks and builds were re-run Oc
 
 | Check | Result |
 | --- | --- |
-| `npm test` in `apps/web` | **106/106 passing**, ten suites. Calculation, CSV/backup, persisted state, owner isolation, native bearer-session revocation, Plaid fixtures and environment separation, transaction browsing, and verified Supabase TLS regressions. |
+| `npm test` in `apps/web` | **113/113 passing**, ten suites. Calculation, CSV/backup, persisted state, owner isolation, native bearer-session revocation, Plaid fixtures, Link diagnostics and environment separation, transaction browsing, and verified Supabase TLS regressions. |
 | `npm run build` in `apps/web` | **Pass.** TypeScript check and Vite production bundle. Web JavaScript approximately 445 KB / 134 KB gzip. A separate fresh install/build containing only the web directory also passed. |
 | `npm run native:check` in `apps/web` | **Pass.** The checked-in native engine, fonts, and license notices match their web sources. This check is separate from the web build. |
 | `node scripts/native-parity.mjs` in `apps/ios` | **Pass.** Node and JavaScriptCore agree on Dashboard, Cash Flow, net worth, holdings, edit propagation, CSV preview, and full backup restoration. No web dependencies are needed by this native runner. |
@@ -20,6 +20,12 @@ October 15–16, 2026. Web and native automated checks and builds were re-run Oc
 The calculation suite covers integer cents, invalid dates/references, split conservation and category-part totals, refunds, transfers, pending records, excluded spending, currency separation, scoped review, merchant rules, monthly budget isolation, archived categories, timezones/DST, leap days, projection edge cases, missing coverage, partial-period comparisons, annual reconciliation, debt signs, stale/missing holdings, CSV duplicates, and full-state restoration. Import regressions verify that manual name/date edits and merchant-rule renames do not create duplicate imports, and that unrelated rows matching an edited display name remain distinct.
 
 Provider tests cover authenticated token encryption, ES256/body/timestamp verification, pagination mutation restart, partial-failure cursor rollback, repeat/out-of-order webhook jobs, 730-day initialization, pending-to-posted replacement, modified/removed records, manual correction preservation, exact manual overlap, split conflicts, duplicate Items, product selection, reauthentication, changed account selection, separate investment pagination, missing quotes, snapshots, update events, disconnect, persistence reopening, stale writes, and cross-owner denial. These use fixtures, not a live institution.
+
+## Link error diagnostics
+
+October 16: a reported Bank of America attempt displayed only Plaid's generic error screen. The screenshot did not establish an underlying error code or institution-registration status. The web client now retains only validated error code, request ID, and Link session ID from the current attempt's ERROR event or exit callback, including an ERROR followed by a null exit error. These fields remain in memory and appear in a collapsed Details section; no SDK payload, credential, token, account metadata, or raw developer error message is logged or persisted. Known customization and institution-access codes receive actionable setup messages without prescribing a paid upgrade. New attempts, completion, closure, and stale callbacks cannot carry prior diagnostics forward; ordinary cancellation stays quiet.
+
+All 113 web tests and the production build pass. A local synthetic Link stub verified the actual Connections dialog's ERROR/null-exit fallback, readable Details at desktop and 390×844 widths, and clearing on retry. The stub called no bank or Plaid API. The user's Bank of America failure remains undiagnosed until its actual error code or Plaid Dashboard event is available.
 
 ## Production enablement
 
