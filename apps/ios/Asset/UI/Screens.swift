@@ -373,7 +373,7 @@ struct AccountsView: View {
         if store.accounts.isEmpty {
           ContentUnavailableView(
             "No accounts yet", systemImage: "building.columns",
-            description: Text("Tap + to add a manual account. Plaid Sandbox is in Settings."))
+            description: Text("Tap + to add a manual account, or open Connections in Settings."))
         }
       }.padding(20)
     }
@@ -499,7 +499,7 @@ struct InvestmentsView: View {
             }.buttonStyle(.plain)
           }
           if v.rows("holdings").isEmpty {
-            Text("Add a manual holding or connect a supported brokerage in Sandbox.")
+            Text("Add a manual holding or connect a supported brokerage.")
               .foregroundStyle(Color.assetSecondary)
           }
         }

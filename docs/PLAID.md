@@ -1,4 +1,4 @@
-# Plaid Sandbox and hosting
+# Plaid connections and hosting
 
 Implementation status on October 16, 2026: the server and both clients implement official Link flows and provider synchronization. Automated tests use deterministic provider fixtures. **No request to a configured Plaid Sandbox account has been executed. No real institution or Production access has been verified.**
 
@@ -6,14 +6,14 @@ Implementation status on October 16, 2026: the server and both clients implement
 
 Manual accounts, CSV, budgets, review, holdings, and backups work without credentials. Demo data is synthetic and cannot be connected to Plaid. A private native workspace stays on the device; a shared workspace uses the authenticated Asset server.
 
-## Configure Sandbox
+## Configure connections
 
 1. The deployment administrator configures one stable `TOKEN_ENCRYPTION_KEY` (32 random bytes encoded as 64 hexadecimal characters). It encrypts both per-user credentials and Item tokens. Preserve it in a protected secret store; replacing it without migrating ciphertext makes existing connections unreadable. It never belongs in a browser bundle, log, or financial backup.
 2. For Vercel, configure an independent `CRON_SECRET` of at least 32 characters and set `PLAID_WORKER_ENABLED=true` with the minute-level cron in `vercel.json`. Set `PLAID_WEBHOOK_URL=https://asset.gtfol.dev/api/plaid/webhook` and `PLAID_WEB_REDIRECT_URI=https://asset.gtfol.dev/plaid/oauth`. The existing gtfol Vercel Pro deployment supports this schedule. A local persistent backend runs its own worker interval.
-3. Each user signs into Asset with Google, opens **Connections**, and enters their own Plaid **Client ID** and **Sandbox secret**. Asset verifies them with an institution-metadata request before saving. It encrypts both fields, binds the ciphertext to that user, and returns only the Client ID's last four characters. Shared deployment-wide Plaid credentials are not used.
+3. Each user signs into Asset with Google, opens **Connections**, and enters their own Plaid **Client ID** and **Production secret**. Asset verifies them with an institution-metadata request before saving. It encrypts both fields, binds the ciphertext to that user, and returns only the Client ID's last four characters. Shared deployment-wide Plaid credentials are not used.
 4. Add the displayed web redirect URL to that user's own Plaid Dashboard. The Link token includes the deployment's webhook URL. Localhost cannot receive Plaid webhooks; local testing needs a separately approved HTTPS endpoint or the hosted app.
-5. Choose a bank/card **Transactions** flow or a brokerage **Investments** flow. Use only Plaid's documented Sandbox test credentials inside official Link. Asset does not collect bank passwords.
-6. Check initial and historical loading, selected accounts, cached balances, review records, holdings timestamps, update mode, and disconnect. Record live Sandbox results separately from fixture tests.
+5. Choose a bank/card **Transactions** flow or a brokerage **Investments** flow, then connect through official Link. The user’s own Plaid account must have Production access for that product and institution. Asset does not collect bank passwords.
+6. Check initial and historical loading, selected accounts, cached balances, review records, holdings timestamps, update mode, and disconnect. Record live bank-linking results separately from fixture tests.
 
 The credential form clears the secret after submission and does not persist it in browser storage or native preferences. Secret rotation for the same Client ID is allowed while connected. Changing Client ID/environment or removing credentials requires disconnecting that user's active institutions first. A version check rejects an in-flight exchange if its credentials changed. Financial backups exclude provider credentials and access tokens. This implementation has not created a Plaid account, accepted a trial, purchased service, or accessed a bank.
 
@@ -68,16 +68,20 @@ Set `APP_ORIGIN` to the web HTTPS origin and `HOST` appropriately. The supplied 
 
 Vercel serves the client and same-origin API from `apps/web`; see [web deployment setup](../apps/web/README.md#vercel-and-supabase). Its database migrations run at API initialization, including the queue and per-user credential tables. The cron endpoint requires its independent bearer secret; user sessions cannot invoke it. Vercel Plaid routes require both `PLAID_WORKER_ENABLED=true` and a configured cron secret. The function uses a 45-second work budget within its 60-second limit. Supabase is optional storage for local use. Operational backups must preserve the database and its encryption key separately from user-exported financial backups.
 
-## Separate live-access gate
+## Production and developer testing
 
-Production is blocked by code even when production credentials are supplied. Before changing that restriction, obtain the owner's explicit approval and verify actual access in the developer's Plaid Dashboard: enabled products, institution permissions, country/account coverage, pricing, trial eligibility, and limits. Do not assume any particular brokerage is available.
+The owner explicitly approved enabling Production on October 16, 2026. Production is now the default for normal hosted setup; the form asks for a Client ID and Production secret without an environment picker. Credential validation calls the matching Production API, and Link requests only the user-selected product. Each user’s own Plaid Dashboard determines product and institution permissions, coverage, pricing, and limits. Enabling Asset’s integration does not grant Plaid Production access or establish support for a particular brokerage.
 
-Plaid has Sandbox and Production environments. A trial is limited real Production access, not another environment. Current eligibility and Item limits must be rechecked; an Item is a connection that may contain several accounts. No trial application or real-bank connection is authorized by this build.
+Sandbox remains available for local development or an explicit `PLAID_ALLOW_SANDBOX=true` server configuration. Existing Sandbox credentials keep their original environment and remain visibly identified as test data; they are never silently migrated to Production. Changing environments requires disconnecting active institutions first. Connection identity includes the environment, so a new Production connection never reuses a disconnected Sandbox connection ID. Retained Sandbox records are not relabeled as real-bank records; their connection stays visibly marked as test data. The provider accepts only the two hardcoded official API hosts and requires explicit per-user credentials, with no shared environment-key fallback. Tests mock both hosts and send no requests to real institutions.
 
-Required live validation includes signed native OAuth, webhook delivery and retry, limited history, unsupported institutions, stale data, reconnect/account changes, missing holdings, backup/recovery, and owner isolation. Sandbox success alone cannot establish Production readiness.
+Plaid has Sandbox and Production environments. A trial is limited real Production access, not another environment. Current eligibility and Item limits must be rechecked; an Item is a connection that may contain several accounts. No trial application, purchase, or bank connection was performed while enabling this feature. Users connect their own institutions through Link after saving approved Production credentials.
+
+Required live validation includes signed native OAuth, webhook delivery and retry, limited history, unsupported institutions, stale data, reconnect/account changes, missing holdings, backup/recovery, and owner isolation. Automated fixture success alone cannot establish live Production behavior.
 
 ## Official references
 
 Rechecked during implementation on October 15–16, 2026: [Transactions and initial history](https://plaid.com/docs/transactions/), [cached account balances](https://plaid.com/docs/api/accounts/), [Investments coverage and timestamps](https://plaid.com/docs/investments/), [institution support](https://plaid.com/docs/api/institutions/), [Sandbox limitations](https://plaid.com/docs/sandbox/), [webhook verification](https://plaid.com/docs/api/webhooks/webhook-verification/), and [Sandbox/Production/Trial differences](https://support.plaid.com/hc/en-us/articles/16110110883479-How-are-Sandbox-Production-Trial-plan-and-Limited-Production-different).
 
 Hosting and OAuth: [Vercel Cron limits](https://vercel.com/docs/cron-jobs/usage-and-pricing), [Plaid Link API](https://plaid.com/docs/api/link/), and [web OAuth handling](https://plaid.com/docs/link/oauth/).
+
+Environment routing: [Plaid API hosts and environment boundaries](https://plaid.com/docs/api/#api-host).

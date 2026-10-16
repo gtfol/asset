@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import type { Database, SQL } from './db.js';
-import { decryptToken, encryptToken, PlaidSandbox, type PlaidProvider } from './plaid.js';
+import { decryptToken, encryptToken, PlaidClient, type PlaidProvider } from './plaid.js';
 
 const credential = z
   .string()
@@ -12,13 +12,35 @@ const credential = z
 export const plaidCredentialsSchema = z.object({
   clientId: credential,
   secret: credential,
-  environment: z.literal('sandbox'),
+  environment: z.enum(['production', 'sandbox']),
 });
 export type PlaidCredentials = z.infer<typeof plaidCredentialsSchema>;
 type StoredCredentials = { encrypted_config: string; version: string };
 
 function failure(message: string, status: number) {
   return Object.assign(Error(message), { status });
+}
+
+function sandboxAllowed() {
+  return (
+    process.env.PLAID_ALLOW_SANDBOX === 'true' ||
+    (process.env.NODE_ENV !== 'production' && process.env.VERCEL !== '1')
+  );
+}
+
+function assertEnvironmentAllowed(
+  credentials: PlaidCredentials,
+  saved: PlaidCredentials | undefined,
+) {
+  if (
+    credentials.environment === 'sandbox' &&
+    !sandboxAllowed() &&
+    !(saved?.environment === 'sandbox' && saved.clientId === credentials.clientId)
+  )
+    throw failure(
+      'Sandbox credentials are disabled on this server. Use your Production credentials.',
+      403,
+    );
 }
 
 export function plaidStorageReady() {
@@ -56,9 +78,12 @@ export async function plaidConfiguration(db: SQL, owner: string, platform: 'web'
     platform === 'ios' ? process.env.PLAID_IOS_REDIRECT_URI : process.env.PLAID_WEB_REDIRECT_URI;
   return {
     configured: !!stored,
-    environment: stored?.credentials.environment ?? 'sandbox',
+    environment: stored?.credentials.environment ?? 'production',
     ...(stored ? { clientIdLast4: stored.credentials.clientId.slice(-4) } : {}),
-    supportedEnvironments: ['sandbox'] as const,
+    supportedEnvironments:
+      sandboxAllowed() || stored?.credentials.environment === 'sandbox'
+        ? (['production', 'sandbox'] as const)
+        : (['production'] as const),
     storageReady: plaidStorageReady(),
     workerReady: plaidWorkerReady(),
     ...(redirectUri ? { redirectUri } : {}),
@@ -68,8 +93,9 @@ export async function plaidConfiguration(db: SQL, owner: string, platform: 'web'
 export async function userPlaidProvider(db: Database, owner: string): Promise<PlaidProvider> {
   const saved = await readCredentials(db, owner);
   if (!saved) throw failure('Add your Plaid credentials in Connections first.', 409);
-  const provider = new PlaidSandbox(saved.credentials);
+  const provider = new PlaidClient(saved.credentials);
   return {
+    environment: provider.environment,
     call: (path, body, options) => provider.call(path, body, options),
     async assertCurrent(tx, currentOwner) {
       if (currentOwner !== owner) throw failure('Connection owner does not match.', 403);
@@ -94,11 +120,13 @@ export async function savePlaidCredentials(
 ) {
   if (!plaidStorageReady()) throw failure('Secure connection storage is not available yet.', 503);
   const credentials = plaidCredentialsSchema.parse(input);
+  assertEnvironmentAllowed(credentials, (await readCredentials(db, owner))?.credentials);
   // Validate without creating an Item or retrieving any financial information.
   await verify(credentials);
   await db.transaction(async (tx) => {
     await tx.query('SELECT id FROM users WHERE id=$1 FOR UPDATE', [owner]);
     const saved = await readCredentials(tx, owner);
+    assertEnvironmentAllowed(credentials, saved?.credentials);
     if (saved && JSON.stringify(saved.credentials) === JSON.stringify(credentials)) return;
     const active =
       (

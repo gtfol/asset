@@ -28,7 +28,10 @@ describe('Plaid route isolation and lifecycle', () => {
     vi.stubEnv('VERCEL', undefined);
     vi.stubEnv('TOKEN_ENCRYPTION_KEY', 'c'.repeat(64));
     db = await openDatabase(':memory:');
-    const provider: PlaidProvider = { call: (path, body) => call(path, body) };
+    const provider: PlaidProvider = {
+      environment: 'sandbox',
+      call: (path, body) => call(path, body),
+    };
     server = createApp(db, provider).listen(0, '127.0.0.1');
     await once(server, 'listening');
     base = `http://127.0.0.1:${(server.address() as any).port}/api`;
@@ -163,6 +166,17 @@ describe('Plaid route isolation and lifecycle', () => {
     expect(response.status).toBe(200);
     expect(call).toHaveBeenCalledWith('/item/remove', { access_token: 'old-access' });
     expect(await connection()).toMatchObject({ status: 'disconnected', encrypted_token: '' });
+  });
+
+  it('returns connection environments and blocks update metadata with a mismatched provider', async () => {
+    await db.query("UPDATE connections SET environment='production' WHERE id='connection'");
+    const response = await request('/plaid/connection/update-complete', {
+      body: { selected: ['provider-old'] },
+    });
+    expect(response.status).toBe(409);
+    expect(call).not.toHaveBeenCalled();
+    const { connections } = await (await request('/state')).json();
+    expect(connections).toMatchObject([{ id: 'connection', environment: 'production' }]);
   });
 
   it('does not apply delayed update-mode metadata to a replacement Item', async () => {

@@ -81,7 +81,7 @@ function PlaidButton({
   return (
     <>
       <button className="primary" disabled={!ready || opening} onClick={launch}>
-        {opening ? 'Connection open…' : ready ? 'Open Plaid Sandbox' : 'Preparing connection…'}
+        {opening ? 'Connection open…' : ready ? 'Open Plaid' : 'Preparing connection…'}
       </button>
       {error && (
         <p className="form-error" role="alert">
@@ -131,7 +131,7 @@ export function ConnectionsDialog({
   const [configLoading, setConfigLoading] = useState(!state.settings.demo);
   const [clientId, setClientId] = useState('');
   const [secret, setSecret] = useState('');
-  const [environment, setEnvironment] = useState('sandbox');
+  const [environment, setEnvironment] = useState('production');
   const [disconnecting, setDisconnecting] = useState<string | null>(null);
   const [remove, setRemove] = useState(false);
   const [confirmation, setConfirmation] = useState('');
@@ -140,6 +140,10 @@ export function ConnectionsDialog({
   const mounted = useRef(true);
   const locked = !!busy || !!attempt || configLoading;
   const hasConnections = connections.some((c) => c.status !== 'disconnected');
+  const savedSandbox = config?.configured === true && config.environment === 'sandbox';
+  const showEnvironment =
+    config &&
+    (config.supportedEnvironments.length !== 1 || config.supportedEnvironments[0] !== 'production');
   const connectionAPI = (
     path: string,
     body?: unknown,
@@ -268,8 +272,9 @@ export function ConnectionsDialog({
       <div className="connection-intro">
         <h3>Connect with your Plaid account.</h3>
         <p>
-          Use your own Plaid Sandbox credentials. Sandbox uses test institutions and test data; it
-          does not connect your real bank.
+          {savedSandbox
+            ? 'Your saved Plaid Sandbox credentials connect test institutions only. Save Production credentials to connect your real accounts.'
+            : 'Use your own Plaid Production credentials to connect your banks and brokerages.'}
         </p>
       </div>
       {state.settings.demo ? (
@@ -285,7 +290,8 @@ export function ConnectionsDialog({
               <h3>Plaid credentials</h3>
               {config.configured && (
                 <p className="tiny muted">
-                  Client ID ending in {config.clientIdLast4 ?? '••••'}. Your secret is saved.
+                  {config.environment === 'sandbox' ? 'Sandbox' : 'Production'} credentials saved.
+                  Client ID ending in {config.clientIdLast4 ?? '••••'}.
                 </p>
               )}
               <form
@@ -295,24 +301,26 @@ export function ConnectionsDialog({
                 }}
               >
                 <div className="form-grid plaid-credential-fields">
-                  <label>
-                    Environment
-                    <select
-                      value={environment}
-                      onChange={(e) => setEnvironment(e.target.value)}
-                      disabled={locked || hasConnections || !config.storageReady}
-                    >
-                      {config.supportedEnvironments.map((value) => (
-                        <option key={value} value={value}>
-                          {value === 'sandbox'
-                            ? 'Sandbox'
-                            : value === 'production'
-                              ? 'Production'
-                              : value}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
+                  {showEnvironment && (
+                    <label>
+                      Environment
+                      <select
+                        value={environment}
+                        onChange={(e) => setEnvironment(e.target.value)}
+                        disabled={locked || hasConnections || !config.storageReady}
+                      >
+                        {config.supportedEnvironments.map((value) => (
+                          <option key={value} value={value}>
+                            {value === 'sandbox'
+                              ? 'Sandbox'
+                              : value === 'production'
+                                ? 'Production'
+                                : value}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  )}
                   <label>
                     Client ID
                     <input
@@ -325,7 +333,7 @@ export function ConnectionsDialog({
                     />
                   </label>
                   <label>
-                    {environment === 'sandbox' ? 'Sandbox secret' : 'Secret'}
+                    {environment === 'sandbox' ? 'Sandbox secret' : 'Production secret'}
                     <input
                       type="password"
                       value={secret}
@@ -343,7 +351,8 @@ export function ConnectionsDialog({
                 {hasConnections && (
                   <p className="tiny muted">
                     You can update the secret for this Plaid account. Disconnect your institutions
-                    before changing Plaid accounts or environments, or removing credentials.
+                    before changing Plaid accounts{showEnvironment ? ' or environments' : ''}, or
+                    removing credentials.
                   </p>
                 )}
                 <div className="button-row">
@@ -425,7 +434,7 @@ export function ConnectionsDialog({
                 </div>
               ) : (
                 <button className="primary" disabled={locked} onClick={() => void link()}>
-                  Connect Sandbox institution
+                  {savedSandbox ? 'Connect Sandbox institution' : 'Connect institution'}
                 </button>
               )}
             </section>
@@ -452,7 +461,8 @@ export function ConnectionsDialog({
             />
           </div>
           <p className="tiny muted">
-            {c.product} · Last fetched{' '}
+            {c.product}
+            {c.environment === 'sandbox' ? ' · Sandbox test data' : ''} · Last fetched{' '}
             {c.last_synced_at ? new Date(c.last_synced_at).toLocaleString() : 'not yet'} ·{' '}
             {c.historical_complete ? 'Initial history finished' : 'History may still be loading'}
           </p>
@@ -559,9 +569,7 @@ export function ConnectionsDialog({
           )}
         </section>
       ))}
-      <p className="tiny muted">
-        Balances and holdings reflect the last bank update. Sandbox uses test accounts only.
-      </p>
+      <p className="tiny muted">Balances and holdings reflect the last bank update.</p>
       {error && (
         <p className="form-error" role="alert">
           {error}

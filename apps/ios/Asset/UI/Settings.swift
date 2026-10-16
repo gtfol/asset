@@ -158,7 +158,7 @@ struct SettingsView: View {
           }
         }
         Section {
-          NavigationLink("Plaid Sandbox connections") { ConnectionsView() }
+          NavigationLink("Connections") { ConnectionsView() }
           NavigationLink("Third-party licenses") {
             ScrollView {
               Text(
@@ -350,7 +350,7 @@ struct ConnectionsView: View {
   @State private var configurationError = ""
   @State private var clientID = ""
   @State private var secret = ""
-  @State private var environment = "sandbox"
+  @State private var environment = "production"
   @State private var disconnecting: Row?
   @State private var remove = false
   @State private var confirm = ""
@@ -369,24 +369,38 @@ struct ConnectionsView: View {
     store.connections.contains { $0.text("status") != "disconnected" }
   }
   private var environments: [String] {
-    configuration?.data["supportedEnvironments"] as? [String] ?? ["sandbox"]
+    var values = configuration?.data["supportedEnvironments"] as? [String] ?? ["production"]
+    if configuration?.flag("configured") == true, !values.contains(savedEnvironment) {
+      values.append(savedEnvironment)
+    }
+    return values
+  }
+  private var savedEnvironment: String {
+    configuration?.text("environment", "production") ?? "production"
+  }
+  private var testConnections: Bool {
+    configuration?.flag("configured") == true && savedEnvironment == "sandbox"
   }
 
   private var connectionButtonTitle: String {
     if lifecycle.consumed { return "Saving connection…" }
     if lifecycle.ready { return "Connection ready" }
-    return lifecycle.active ? "Preparing connection…" : "Connect test institution"
+    if lifecycle.active { return "Preparing connection…" }
+    return testConnections ? "Connect test institution" : "Connect institution"
   }
 
   var body: some View {
     List {
       Section {
-        Text("Sandbox uses test institutions and test data. It never connects a real bank.").font(
-          .custom("Lato-Regular", size: 15, relativeTo: .subheadline))
+        Text(
+          testConnections
+            ? "Your saved Plaid credentials use Sandbox. These connections use test institutions and test data, not real bank accounts."
+            : "Connect bank and investment accounts using your Plaid credentials."
+        ).font(.custom("Lato-Regular", size: 15, relativeTo: .subheadline))
       }
       if !remote {
         Text(
-          "Sign in to a private server workspace to connect Plaid Sandbox. Local accounts and CSV work without a server."
+          "Sign in to connect your accounts. Local accounts and CSV work without a server."
         )
       } else {
         credentialsSection
@@ -406,7 +420,7 @@ struct ConnectionsView: View {
                 prepare()
               }.disabled(locked)
               if lifecycle.ready {
-                Button("Open Plaid Sandbox") {
+                Button(testConnections ? "Open Plaid Sandbox" : "Open Plaid") {
                   presentedAttempt = lifecycle.attempt?.id
                   presenting = true
                 }
@@ -424,6 +438,11 @@ struct ConnectionsView: View {
       ForEach(store.connections) { c in
         Section(c.text("institution_name")) {
           StatusLabel(text: c.text("status"))
+          if c.text("environment") == "sandbox" {
+            Text("Sandbox test data")
+              .font(.custom("Lato-Regular", size: 13, relativeTo: .caption))
+              .foregroundStyle(Color.assetSecondary)
+          }
           Text(
             "\(c.text("product").capitalized) · Last fetched \(c.text("last_synced_at", "not yet"))"
           )
@@ -529,15 +548,24 @@ struct ConnectionsView: View {
               .foregroundStyle(Color.assetSecondary)
           }
         }
-        Picker("Environment", selection: $environment) {
-          ForEach(environments, id: \.self) { value in
-            Text(value.capitalized).tag(value)
-          }
-        }.disabled(locked || activeConnections || !storageReady)
+        if environments.count > 1 {
+          Picker("Environment", selection: $environment) {
+            ForEach(environments, id: \.self) { value in
+              Text(value == "sandbox" ? "Sandbox · Test data" : "Production").tag(value)
+            }
+          }.disabled(locked || activeConnections || !storageReady)
+        }
+        if environment == "sandbox" {
+          Text(
+            "Sandbox credentials connect only test institutions. Select Production and save its credentials to connect real accounts."
+          )
+          .font(.custom("Lato-Regular", size: 13, relativeTo: .caption))
+          .foregroundStyle(Color.assetSecondary)
+        }
         TextField("Client ID", text: $clientID)
           .textInputAutocapitalization(.never).autocorrectionDisabled()
           .disabled(locked || !storageReady)
-        SecureField("Sandbox secret", text: $secret)
+        SecureField(environment == "sandbox" ? "Sandbox secret" : "Production secret", text: $secret)
           .textInputAutocapitalization(.never).autocorrectionDisabled()
           .disabled(locked || !storageReady)
         Button(configuration.flag("configured") ? "Update credentials" : "Save credentials") {
@@ -606,9 +634,11 @@ struct ConnectionsView: View {
       try Task.checkCancellation()
       guard current(workspace), configurationLoadID == id else { return }
       configuration = Row(result)
-      let supported = result["supportedEnvironments"] as? [String] ?? ["sandbox"]
-      let saved = result["environment"] as? String ?? "sandbox"
-      environment = supported.contains(saved) ? saved : (supported.first ?? "sandbox")
+      let supported = result["supportedEnvironments"] as? [String] ?? ["production"]
+      let saved = result["environment"] as? String ?? "production"
+      environment =
+        result["configured"] as? Bool == true || supported.contains(saved)
+        ? saved : (supported.first ?? "production")
     } catch is CancellationError {
     } catch {
       guard current(workspace), configurationLoadID == id, !Task.isCancelled else { return }

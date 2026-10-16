@@ -27,6 +27,7 @@ export class PlaidError extends Error {
   }
 }
 export interface PlaidProvider {
+  readonly environment?: PlaidEnvironment;
   assertCurrent?(tx: SQL, owner: string): Promise<void>;
   call<T = any>(
     path: string,
@@ -34,20 +35,28 @@ export interface PlaidProvider {
     options?: { deadline?: number },
   ): Promise<T>;
 }
-export class PlaidSandbox implements PlaidProvider {
-  constructor(
-    private credentials?: { clientId: string; secret: string; environment?: 'sandbox' },
-  ) {}
+export type PlaidEnvironment = 'production' | 'sandbox';
+export class PlaidClient implements PlaidProvider {
+  readonly environment: PlaidEnvironment;
+  private readonly credentials: { clientId: string; secret: string; environment: PlaidEnvironment };
+  private readonly origin: string;
+  constructor(credentials: { clientId: string; secret: string; environment: PlaidEnvironment }) {
+    if (!credentials?.clientId || !credentials.secret) throw new PlaidError('PLAID_NOT_CONFIGURED');
+    if (credentials.environment !== 'production' && credentials.environment !== 'sandbox')
+      throw new PlaidError('INVALID_PLAID_ENVIRONMENT');
+    this.credentials = { ...credentials };
+    this.environment = credentials.environment;
+    this.origin =
+      credentials.environment === 'production'
+        ? 'https://production.plaid.com'
+        : 'https://sandbox.plaid.com';
+  }
   async call<T>(
     path: string,
     body: Record<string, unknown>,
     options: { deadline?: number } = {},
   ): Promise<T> {
-    if ((this.credentials?.environment ?? process.env.PLAID_ENV ?? 'sandbox') !== 'sandbox')
-      throw new PlaidError('PRODUCTION_BLOCKED');
-    const clientId = this.credentials?.clientId ?? process.env.PLAID_CLIENT_ID;
-    const secret = this.credentials?.secret ?? process.env.PLAID_SECRET;
-    if (!clientId || !secret) throw new PlaidError('SANDBOX_NOT_CONFIGURED');
+    const { clientId, secret } = this.credentials;
     const deadline = options.deadline ?? Date.now() + 20000;
     const attempts = [
       '/accounts/get',
@@ -64,7 +73,7 @@ export class PlaidSandbox implements PlaidProvider {
       const remaining = deadline - Date.now();
       if (remaining <= 500) throw new PlaidError('SYNC_DEADLINE');
       try {
-        const response = await fetch('https://sandbox.plaid.com' + path, {
+        const response = await fetch(this.origin + path, {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ ...body, client_id: clientId, secret }),
@@ -93,6 +102,7 @@ export class PlaidSandbox implements PlaidProvider {
 const deadlineSources = new WeakMap<PlaidProvider, PlaidProvider>();
 export function withPlaidDeadline(provider: PlaidProvider, deadline: number): PlaidProvider {
   const bounded: PlaidProvider = {
+    ...(provider.environment ? { environment: provider.environment } : {}),
     ...(provider.assertCurrent ? { assertCurrent: provider.assertCurrent.bind(provider) } : {}),
     async call<T>(path: string, body: Record<string, unknown>, options = {}) {
       const limit = Math.min(deadline, (options as { deadline?: number }).deadline ?? deadline);
@@ -139,6 +149,7 @@ export type Connection = {
   institution_name: string;
   encrypted_token: string;
   product: 'transactions' | 'investments';
+  environment: PlaidEnvironment;
   cursor: string | null;
   selected_accounts: string[];
   status: string;
@@ -147,6 +158,10 @@ export type Connection = {
   historical_complete: boolean;
   error_code: string | null;
 };
+export function assertConnectionEnvironment(provider: PlaidProvider, connection: Connection) {
+  if (provider.environment !== undefined && provider.environment !== connection.environment)
+    throw Object.assign(new PlaidError('PLAID_ENVIRONMENT_MISMATCH'), { status: 409 });
+}
 export async function ownedConnection(db: SQL, id: string, owner: string) {
   const r = await db.query<Connection>('SELECT * FROM connections WHERE id=$1 AND owner_id=$2', [
     id,
@@ -158,7 +173,7 @@ export async function ownedConnection(db: SQL, id: string, owner: string) {
 export async function listConnections(db: SQL, owner: string) {
   return (
     await db.query(
-      'SELECT id,institution_name,product,status,last_synced_at,initial_complete,historical_complete,error_code,selected_accounts FROM connections WHERE owner_id=$1 ORDER BY created_at',
+      'SELECT id,institution_name,product,environment,status,last_synced_at,initial_complete,historical_complete,error_code,selected_accounts FROM connections WHERE owner_id=$1 ORDER BY created_at',
       [owner],
     )
   ).rows;
@@ -197,6 +212,7 @@ export async function createLinkToken(
   if (connectionId) {
     const c = await ownedConnection(db, connectionId, owner);
     if (c.status === 'disconnected') throw Error('Connect this institution again');
+    assertConnectionEnvironment(provider, c);
     params.access_token = decryptToken(c.encrypted_token);
     params.update = { account_selection_enabled: true };
   } else {
@@ -213,6 +229,7 @@ export async function exchangeLink(
   product: 'transactions' | 'investments',
   selected: string[],
 ) {
+  const environment = provider.environment ?? 'sandbox';
   const exchanged = await provider.call('/item/public_token/exchange', {
     public_token: publicToken,
   });
@@ -221,8 +238,8 @@ export async function exchangeLink(
     const item = await provider.call('/item/get', { access_token: token });
     const institutionId = item.item.institution_id ?? exchanged.item_id;
     const existing = await db.query<Connection>(
-      'SELECT * FROM connections WHERE owner_id=$1 AND institution_id=$2 AND product=$3',
-      [owner, institutionId, product],
+      'SELECT * FROM connections WHERE owner_id=$1 AND institution_id=$2 AND product=$3 AND environment=$4',
+      [owner, institutionId, product, environment],
     );
     if (existing.rows[0] && existing.rows[0].status !== 'disconnected')
       throw new PlaidError('DUPLICATE_CONNECTION');
@@ -240,8 +257,8 @@ export async function exchangeLink(
       await provider.assertCurrent?.(tx, owner);
       const current = (
         await tx.query<Connection>(
-          'SELECT * FROM connections WHERE owner_id=$1 AND institution_id=$2 AND product=$3 FOR UPDATE',
-          [owner, institutionId, product],
+          'SELECT * FROM connections WHERE owner_id=$1 AND institution_id=$2 AND product=$3 AND environment=$4 FOR UPDATE',
+          [owner, institutionId, product, environment],
         )
       ).rows[0];
       if (current && current.status !== 'disconnected')
@@ -249,7 +266,7 @@ export async function exchangeLink(
       const id = current?.id ?? randomUUID();
       if (current) await tx.query('DELETE FROM connections WHERE id=$1', [id]);
       await tx.query(
-        'INSERT INTO connections(id,owner_id,item_id,institution_id,institution_name,encrypted_token,product,selected_accounts,status) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)',
+        'INSERT INTO connections(id,owner_id,item_id,institution_id,institution_name,encrypted_token,product,selected_accounts,status,environment) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',
         [
           id,
           owner,
@@ -260,6 +277,7 @@ export async function exchangeLink(
           product,
           JSON.stringify(use),
           'initial_loading',
+          environment,
         ],
       );
       await enqueueSync(tx, id);
@@ -466,6 +484,7 @@ export async function syncConnection(
 ) {
   const c = await ownedConnection(db, id, owner);
   if (c.status === 'disconnected') throw Error('Connection is disconnected');
+  assertConnectionEnvironment(provider, c);
   const token = decryptToken(c.encrypted_token);
   try {
     const metadata = await provider.call('/accounts/get', { access_token: token });
@@ -546,6 +565,7 @@ async function commitSync(
     if (lease) await requireLease(tx, id, lease.token);
     if (
       live.cursor !== c.cursor ||
+      live.environment !== c.environment ||
       live.encrypted_token !== c.encrypted_token ||
       JSON.stringify(live.selected_accounts) !== JSON.stringify(c.selected_accounts) ||
       live.status === 'disconnected'
@@ -833,6 +853,7 @@ const connectionSource = (connection: Connection) =>
         connection.selected_accounts,
         connection.item_id,
         connection.product,
+        connection.environment,
       ]),
     )
     .digest('hex');
@@ -940,6 +961,7 @@ export async function processJob(
         : providerOrFactory;
     // Reserve time for checkpointing/commit and acknowledgment before the function's hard limit.
     const provider = withPlaidDeadline(resolved, deadline - 3000);
+    assertConnectionEnvironment(provider, c);
     const token = decryptToken(c.encrypted_token);
     let stage =
       job.stage?.version === 1 && job.stage.source === connectionSource(c)
@@ -1035,8 +1057,9 @@ export async function processJob(
         'ITEM_LOGIN_REQUIRED',
         'PRODUCT_NOT_SUPPORTED',
         'INVALID_PRODUCT',
-        'SANDBOX_NOT_CONFIGURED',
-        'PRODUCTION_BLOCKED',
+        'PLAID_NOT_CONFIGURED',
+        'INVALID_PLAID_ENVIRONMENT',
+        'PLAID_ENVIRONMENT_MISMATCH',
         'ENCRYPTION_KEY_REQUIRED',
         'PAGINATION_LIMIT',
         'SYNC_RESTART_LIMIT',
@@ -1075,8 +1098,10 @@ export async function disconnect(
   deleteData = false,
 ) {
   const c = await ownedConnection(db, id, owner);
-  if (c.status !== 'disconnected')
+  if (c.status !== 'disconnected') {
+    assertConnectionEnvironment(provider, c);
     await provider.call('/item/remove', { access_token: decryptToken(c.encrypted_token) });
+  }
   return mutateState(db, owner, async (s, tx) => {
     const current = (
       await tx.query<Connection>(

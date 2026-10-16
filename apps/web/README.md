@@ -78,7 +78,7 @@ Manual accounts, CSV imports, and the synthetic demo need no Plaid credentials. 
 
 ### Bank synchronization
 
-Each user adds their own Plaid Client ID and Sandbox secret in **Connections**. The server validates and encrypts these separately from financial state; it never returns the saved secret. Do not configure shared `PLAID_CLIENT_ID` or `PLAID_SECRET` values in Vercel.
+Each user adds their own Plaid Client ID and Production secret in **Connections**. The server validates and encrypts these separately from financial state; it never returns the saved secret. Do not configure shared `PLAID_CLIENT_ID` or `PLAID_SECRET` values in Vercel.
 
 Configure these server variables, then redeploy:
 
@@ -92,6 +92,6 @@ Configure these server variables, then redeploy:
 
 `vercel.json` schedules `/api/internal/plaid-worker` every minute. This schedule requires a Vercel plan that supports minute-level cron; the existing gtfol project uses Pro. The function has a 60-second limit, and the worker reserves time to checkpoint before it expires. Transactions and investment pages resume from durable staging across invocations. A lease prevents overlapping workers from committing the same job, and periodic reconciliation recovers missed notifications. No separate worker service is needed for this deployment. A persistent Node deployment continues to use its local interval against the same queue.
 
-Each user must add the displayed web redirect URL to their own Plaid Dashboard before using bank OAuth. Native OAuth needs the additional signing and Universal Link configuration in [Plaid setup](../../docs/PLAID.md#native-link-and-oauth). This release remains Sandbox-only; real-bank access is not enabled.
+Each user must add the displayed web redirect URL to their own Plaid Dashboard before using bank OAuth. Native OAuth needs the additional signing and Universal Link configuration in [Plaid setup](../../docs/PLAID.md#native-link-and-oauth). Production is the default user flow. Each user needs Production access for the requested products in their own Plaid account. Sandbox is available in local development or with the explicit `PLAID_ALLOW_SANDBOX=true` server flag; existing Sandbox configurations retain their environment and remain labeled as test data. Ordinary hosted setup has no environment picker.
 
 See [Vercel's Node function documentation](https://vercel.com/docs/functions/runtimes/node-js), [cron limits](https://vercel.com/docs/cron-jobs/usage-and-pricing), [Supabase connection guidance](https://supabase.com/docs/guides/database/connecting-to-postgres), and [Google OpenID Connect setup](https://developers.google.com/identity/openid-connect/openid-connect).

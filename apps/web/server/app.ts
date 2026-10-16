@@ -6,7 +6,8 @@ import { createDemo } from '../shared/demo.js';
 import { getState, mutateState, type Database } from './db.js';
 import { authenticated, newSession, readToken, tokenHash } from './auth.js';
 import {
-  PlaidSandbox,
+  PlaidClient,
+  assertConnectionEnvironment,
   PlaidError,
   createLinkToken,
   exchangeLink,
@@ -245,7 +246,7 @@ export function createApp(
     }
     await savePlaidCredentials(db, res.locals.owner, req.body, async (credentials) => {
       try {
-        await withPlaidDeadline(new PlaidSandbox(credentials), Date.now() + 15000).call(
+        await withPlaidDeadline(new PlaidClient(credentials), Date.now() + 15000).call(
           '/institutions/get',
           { country_codes: ['US'], count: 1, offset: 0 },
         );
@@ -292,8 +293,7 @@ export function createApp(
       })
       .parse(req.body);
     const { state } = await getState(db, res.locals.owner);
-    if (state.settings.demo)
-      throw Error('Create a private workspace before connecting Plaid Sandbox');
+    if (state.settings.demo) throw Error('Sign in to connect your bank accounts');
     res.json(
       await createLinkToken(
         db,
@@ -329,9 +329,9 @@ export function createApp(
     const selected = z.array(z.string()).min(1).parse(req.body.selected);
     const c = await ownedConnection(db, req.params.id as string, res.locals.owner);
     if (c.status === 'disconnected') throw Error('Connection is disconnected');
-    const metadata = await (
-      await requestProvider(res.locals.owner)
-    ).call('/accounts/get', {
+    const provider = await requestProvider(res.locals.owner);
+    assertConnectionEnvironment(provider, c);
+    const metadata = await provider.call('/accounts/get', {
       access_token: decryptToken(c.encrypted_token),
     });
     if (selected.some((id) => !metadata.accounts.some((a: any) => a.account_id === id)))

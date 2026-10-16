@@ -1507,7 +1507,7 @@ function Accounts({
           </div>
           {state.accounts.length === 0 && (
             <Empty title="No accounts">
-              Add a manual account or connect Plaid Sandbox from Connections.
+              Add a manual account or connect your institution from Connections.
             </Empty>
           )}
         </div>
@@ -1714,7 +1714,7 @@ function Investments({
               ))
             ) : (
               <Empty title="No holdings yet">
-                Add a manual holding or connect a supported brokerage in Sandbox.
+                Add a manual holding or connect a supported brokerage from Connections.
               </Empty>
             )}
           </section>

@@ -37,6 +37,7 @@ const c: Connection = {
   institution_name: 'Test institution',
   encrypted_token: '',
   product: 'transactions',
+  environment: 'sandbox',
   cursor: 'old',
   selected_accounts: ['provider-a'],
   status: 'healthy',

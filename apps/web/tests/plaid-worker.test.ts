@@ -8,6 +8,7 @@ import {
   enqueueWebhook,
   invalidateSync,
   processJob,
+  syncConnection,
   encryptToken,
   createLinkToken,
   exchangeLink,
@@ -15,7 +16,7 @@ import {
   decryptToken,
   verifyWebhook,
   withPlaidDeadline,
-  PlaidSandbox,
+  PlaidClient,
   PlaidError,
   type PlaidProvider,
 } from '../server/plaid';
@@ -436,6 +437,110 @@ describe('resumable Plaid work', () => {
 });
 
 describe('provider boundaries', () => {
+  it('keeps retained Sandbox history separate when the same institution connects in Production', async () => {
+    await enqueueSync(db, 'c');
+    await processJob(db, regular('shared-transaction-id'));
+    await disconnect(
+      db,
+      provider(() => ({})),
+      'owner',
+      'c',
+    );
+    const retained = (await getState(db, 'owner')).state;
+    const production: PlaidProvider = {
+      environment: 'production',
+      ...provider((path) => {
+        if (path === '/item/public_token/exchange')
+          return { access_token: 'production-token', item_id: 'production-item' };
+        if (path === '/item/get') return { item: { institution_id: 'institution' } };
+        if (path === '/accounts/get')
+          return {
+            accounts: [{ ...account, balances: { current: 2000, iso_currency_code: 'USD' } }],
+          };
+        if (path === '/institutions/get_by_id')
+          return { institution: { name: 'Real institution', products: ['transactions'] } };
+        if (path === '/transactions/sync')
+          return page(null, 'production-cursor', { added: [raw('shared-transaction-id', 25)] });
+        throw Error('Unexpected endpoint');
+      }),
+    };
+    const bounded = withPlaidDeadline(production, Date.now() + 40000);
+    expect(bounded.environment).toBe('production');
+    const id = await exchangeLink(db, bounded, 'owner', 'production-public', 'transactions', []);
+    expect(id).not.toBe('c');
+    expect(await connection()).toMatchObject({ status: 'disconnected', environment: 'sandbox' });
+    expect((await db.query('SELECT * FROM connections WHERE id=$1', [id])).rows[0]).toMatchObject({
+      environment: 'production',
+      item_id: 'production-item',
+    });
+    expect((await getState(db, 'owner')).state).toEqual(retained);
+    await processJob(db, bounded);
+    const synced = (await getState(db, 'owner')).state;
+    for (const account of retained.accounts)
+      expect(synced.accounts.find((value) => value.id === account.id)).toEqual(account);
+    for (const transaction of retained.transactions)
+      expect(synced.transactions.find((value) => value.id === transaction.id)).toEqual(transaction);
+    expect(synced.transactions.filter((value) => value.connectionId === id)).toMatchObject([
+      { amount: 2500 },
+    ]);
+  });
+
+  it('rejects mismatched provider environments before sending an existing token', async () => {
+    vi.stubEnv('PLAID_WEB_REDIRECT_URI', undefined);
+    const call = vi.fn(async () => ({}));
+    const production = withPlaidDeadline(
+      { environment: 'production', call } as PlaidProvider,
+      Date.now() + 40000,
+    );
+    await expect(createLinkToken(db, production, 'owner', 'transactions', 'c')).rejects.toThrow(
+      'PLAID_ENVIRONMENT_MISMATCH',
+    );
+    await expect(syncConnection(db, production, 'c', 'owner')).rejects.toThrow(
+      'PLAID_ENVIRONMENT_MISMATCH',
+    );
+    await expect(disconnect(db, production, 'owner', 'c')).rejects.toThrow(
+      'PLAID_ENVIRONMENT_MISMATCH',
+    );
+    await enqueueSync(db, 'c');
+    await processJob(db, production);
+    expect(await job()).toMatchObject({
+      status: 'failed',
+      last_error: 'PLAID_ENVIRONMENT_MISMATCH',
+    });
+    expect(call).not.toHaveBeenCalled();
+    expect(decryptToken((await connection()).encrypted_token)).toBe('fixture-token');
+  });
+
+  it('routes only explicit Production or Sandbox credentials to their fixed hosts', async () => {
+    vi.stubEnv('PLAID_ENV', 'sandbox');
+    vi.stubEnv('PLAID_CLIENT_ID', 'unused-global-client');
+    vi.stubEnv('PLAID_SECRET', 'unused-global-secret');
+    const fetcher = vi.fn(async () => new Response('{}', { status: 200 }));
+    vi.stubGlobal('fetch', fetcher);
+    for (const environment of ['production', 'sandbox'] as const) {
+      await new PlaidClient({ clientId: 'owner-client', secret: 'owner-secret', environment }).call(
+        '/institutions/get',
+        { client_id: 'cannot-override', secret: 'cannot-override' },
+      );
+    }
+    expect(fetcher.mock.calls.map((call: any) => call[0])).toEqual([
+      'https://production.plaid.com/institutions/get',
+      'https://sandbox.plaid.com/institutions/get',
+    ]);
+    for (const call of fetcher.mock.calls as any[])
+      expect(JSON.parse(call[1].body)).toEqual({
+        client_id: 'owner-client',
+        secret: 'owner-secret',
+      });
+    for (const environment of ['development', 'Production', 'https://attacker.invalid', undefined])
+      expect(
+        () =>
+          new PlaidClient({ clientId: 'owner-client', secret: 'owner-secret', environment } as any),
+      ).toThrow('INVALID_PLAID_ENVIRONMENT');
+    expect(() => new PlaidClient(undefined as any)).toThrow('PLAID_NOT_CONFIGURED');
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
   it('keeps the first successful reconnect when two Link sessions finish together', async () => {
     await db.query("UPDATE connections SET status='disconnected',encrypted_token='' WHERE id='c'");
     let arrived = 0;
@@ -507,7 +612,7 @@ describe('provider boundaries', () => {
   it('does not retry one-use public-token exchange after an uncertain provider response', async () => {
     const fetcher = vi.fn().mockRejectedValue(Error('Response was lost'));
     vi.stubGlobal('fetch', fetcher);
-    const p = new PlaidSandbox({
+    const p = new PlaidClient({
       clientId: 'owner-client',
       secret: 'owner-secret',
       environment: 'sandbox',
@@ -563,7 +668,7 @@ describe('provider boundaries', () => {
         return new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } });
       }),
     );
-    await new PlaidSandbox({
+    await new PlaidClient({
       clientId: 'owner-client',
       secret: 'owner-secret',
       environment: 'sandbox',

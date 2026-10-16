@@ -14,7 +14,7 @@ xcodebuild -project Asset.xcodeproj -scheme Asset \
   -derivedDataPath /tmp/asset-derived CODE_SIGNING_ALLOWED=NO build
 ```
 
-The bundle identifier is `org.gtfol.asset`; the deployment target is iOS 18. The local demo and private workspace work without a server. Shared workspaces use the web app's server API. Real bank connections are not enabled; Plaid is limited to Sandbox.
+The bundle identifier is `org.gtfol.asset`; the deployment target is iOS 18. The local demo and private workspace work without a server. Shared workspaces use the web app's server API. Signed-in users can connect real accounts with their own Plaid Production credentials once the server and native OAuth prerequisites below are configured.
 
 ## Google sign-in
 
@@ -31,11 +31,13 @@ The app creates an in-memory random PKCE verifier and sends its SHA-256 challeng
 - `AssetTests/NativeStoreTests.swift` — regression checks against the production Store and paging code.
 - `scripts/` — native verification and optional project/icon regeneration tools.
 
-## Plaid Sandbox
+## Plaid connections
 
-Each signed-in user supplies their own Plaid Client ID and Sandbox secret in Connections. Credentials are validated and encrypted on the server. The app displays only the saved Client ID suffix and keeps the secret input in memory until submission. A secret can be rotated for the same Plaid account while institutions are connected; changing accounts or environments and removing credentials requires disconnecting those institutions first. Local and demo workspaces do not use Plaid credentials.
+Each signed-in user supplies their own Plaid Client ID and Production secret in Connections. Production is the default, and normal hosted setup does not show an environment picker. Sandbox remains available when the server permits it for development or when a user already has saved Sandbox credentials. Existing Sandbox credentials are preserved, and their connection rows remain labeled as test data even after disconnection. To start Production connections, disconnect the test institutions and explicitly save Production credentials. Saving Production credentials does not convert previously imported test data. Link uses the saved environment, regardless of an unsaved form selection.
 
-Native Link uses the pinned LinkKit 7 session API. The server must supply a registered `PLAID_IOS_REDIRECT_URI` when creating native Link tokens. Before bank OAuth can work, configure a real Apple signing team, an `applinks:asset.gtfol.dev` Associated Domains entitlement, and the matching `/.well-known/apple-app-site-association` on the website using that team's actual application identifier prefix and `org.gtfol.asset`. Register the exact HTTPS redirect URI in each user's Plaid Dashboard. The project deliberately does not invent a signing team or application prefix, and the Google sign-in custom scheme is not a Plaid OAuth redirect. Test ordinary Sandbox Link and OAuth/app-to-app separately; a non-OAuth test institution does not verify the universal-link return path.
+Credentials are validated and encrypted on the server. The app displays only the saved Client ID suffix and keeps the secret input in memory until submission. A secret can be rotated for the same Plaid account while institutions are connected; changing accounts or environments and removing credentials requires disconnecting those institutions first. Local and demo workspaces do not use Plaid credentials.
+
+Native Link uses the pinned LinkKit 7 session API. The server must supply a registered `PLAID_IOS_REDIRECT_URI` when creating native Link tokens. Before bank OAuth can work, configure a real Apple signing team, an `applinks:asset.gtfol.dev` Associated Domains entitlement, and the matching `/.well-known/apple-app-site-association` on the website using that team's actual application identifier prefix and `org.gtfol.asset`. Register the exact HTTPS redirect URI in each user's Plaid Dashboard. The project deliberately does not invent a signing team or application prefix, and the Google sign-in custom scheme is not a Plaid OAuth redirect. Verify ordinary Link and bank OAuth/app-to-app separately; a Sandbox or non-OAuth institution does not verify the real-bank universal-link return path. Production access and the requested products must be enabled on the user's Plaid account.
 
 ## Verify independently
 
