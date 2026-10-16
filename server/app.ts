@@ -1,0 +1,309 @@
+import express from 'express';
+import { randomUUID } from 'node:crypto';
+import { z } from 'zod';
+import { applyCommand, backup, emptyState, validateState, type Command } from '../shared/core';
+import { createDemo } from '../shared/demo';
+import { getState, mutateState, type Database } from './db';
+import {
+  authenticated,
+  newSession,
+  passwordHash,
+  passwordMatches,
+  readToken,
+  tokenHash,
+} from './auth';
+import {
+  PlaidSandbox,
+  PlaidError,
+  createLinkToken,
+  exchangeLink,
+  listConnections,
+  ownedConnection,
+  syncConnection,
+  verifyWebhook,
+  enqueueWebhook,
+  disconnect,
+  decryptToken,
+  type PlaidProvider,
+} from './plaid';
+export function createApp(db: Database, provider: PlaidProvider = new PlaidSandbox()) {
+  const app = express();
+  app.disable('x-powered-by');
+  const limits = new Map<string, { count: number; until: number }>();
+  app.use((req, res, next) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Referrer-Policy', 'no-referrer');
+    res.setHeader('X-Frame-Options', 'DENY');
+    if (req.path.startsWith('/api/')) res.setHeader('Cache-Control', 'no-store');
+    next();
+  });
+  app.post(
+    '/api/plaid/webhook',
+    express.raw({ type: 'application/json', limit: '1mb' }),
+    async (req, res) => {
+      if (
+        !Buffer.isBuffer(req.body) ||
+        !(await verifyWebhook(provider, req.body, req.header('plaid-verification') ?? ''))
+      ) {
+        res.status(401).json({ error: 'Invalid webhook' });
+        return;
+      }
+      await enqueueWebhook(db, req.body);
+      res.status(202).json({ accepted: true });
+    },
+  );
+  app.use('/api', express.json({ limit: '12mb' }));
+  app.use('/api', (req, res, next) => {
+    if (req.method === 'GET') {
+      next();
+      return;
+    }
+    const origin = req.header('origin');
+    const allowed = process.env.APP_ORIGIN ?? `http://localhost:${process.env.PORT ?? 4317}`;
+    if (origin && origin !== allowed && origin !== allowed.replace('localhost', '127.0.0.1')) {
+      res.status(403).json({ error: 'Origin not allowed' });
+      return;
+    }
+    if (
+      req.header('x-asset-client') !== 'web' &&
+      req.header('x-asset-client') !== 'ios' &&
+      !req.header('authorization')
+    ) {
+      res.status(403).json({ error: 'Client header required' });
+      return;
+    }
+    next();
+  });
+  app.use('/api/auth', (req, res, next) => {
+    const key = req.ip ?? 'local',
+      now = Date.now();
+    let entry = limits.get(key);
+    if (!entry || entry.until < now) {
+      entry = { count: 0, until: now + 60000 };
+      limits.set(key, entry);
+    }
+    if (++entry.count > 30) {
+      res.status(429).json({ error: 'Too many attempts. Try again in a minute.' });
+      return;
+    }
+    next();
+  });
+  app.post('/api/auth/demo', async (req, res) => {
+    const id = randomUUID();
+    await db.transaction(async (tx) => {
+      await tx.query('INSERT INTO users(id,email,demo) VALUES($1,$2,true)', [
+        id,
+        `${id}@demo.invalid`,
+      ]);
+      await tx.query('INSERT INTO workspaces(owner_id,state) VALUES($1,$2)', [
+        id,
+        JSON.stringify(createDemo()),
+      ]);
+    });
+    const token = await newSession(db, id, res);
+    res.json({ ...(req.header('x-asset-client') === 'ios' ? { token } : {}), demo: true });
+  });
+  app.post('/api/auth/register', async (req, res) => {
+    const { email, password } = z
+      .object({ email: z.email().max(254), password: z.string().min(12).max(200) })
+      .parse(req.body);
+    const id = randomUUID(),
+      state = emptyState();
+    state.categories = createDemo().categories;
+    const hash = await passwordHash(password);
+    try {
+      await db.transaction(async (tx) => {
+        await tx.query('INSERT INTO users(id,email,password_hash) VALUES($1,$2,$3)', [
+          id,
+          email.toLowerCase(),
+          hash,
+        ]);
+        await tx.query('INSERT INTO workspaces(owner_id,state) VALUES($1,$2)', [
+          id,
+          JSON.stringify(state),
+        ]);
+      });
+    } catch {
+      res.status(409).json({ error: 'Account could not be created. Try signing in.' });
+      return;
+    }
+    const token = await newSession(db, id, res);
+    res.json(req.header('x-asset-client') === 'ios' ? { token } : {});
+  });
+  app.post('/api/auth/login', async (req, res) => {
+    const { email, password } = z
+      .object({ email: z.string().max(254), password: z.string().max(200) })
+      .parse(req.body);
+    const user = (
+      await db.query('SELECT id,password_hash FROM users WHERE email=$1 AND demo=false', [
+        email.toLowerCase(),
+      ])
+    ).rows[0];
+    const ok = await passwordMatches(
+      password,
+      user?.password_hash ?? '00000000000000000000000000000000:' + '0'.repeat(128),
+    );
+    if (!user || !ok) {
+      res.status(401).json({ error: 'Email or password is incorrect' });
+      return;
+    }
+    const token = await newSession(db, user.id, res);
+    res.json(req.header('x-asset-client') === 'ios' ? { token } : {});
+  });
+  app.use('/api', authenticated(db));
+  app.post('/api/auth/logout', async (req, res) => {
+    await db.query('DELETE FROM sessions WHERE token_hash=$1', [tokenHash(readToken(req) ?? '')]);
+    res.clearCookie('asset_session', { path: '/' });
+    res.json({ ok: true });
+  });
+  app.get('/api/state', async (_req, res) =>
+    res.json({
+      ...(await getState(db, res.locals.owner)),
+      connections: await listConnections(db, res.locals.owner),
+      plaidConfigured: !!(
+        process.env.PLAID_CLIENT_ID &&
+        process.env.PLAID_SECRET &&
+        process.env.TOKEN_ENCRYPTION_KEY
+      ),
+    }),
+  );
+  app.post('/api/command', async (req, res) => {
+    const c = z
+      .object({
+        type: z.string(),
+        payload: z.record(z.string(), z.unknown()),
+        revision: z.number().int(),
+      })
+      .parse(req.body);
+    res.json(
+      await mutateState(
+        db,
+        res.locals.owner,
+        async (s, tx) => {
+          if (
+            c.type === 'backup.restore' &&
+            (await listConnections(tx, res.locals.owner)).some(
+              (c: any) => c.status !== 'disconnected',
+            )
+          )
+            throw Error('Disconnect active connections before restoring a backup');
+          return applyCommand(s, c as Command);
+        },
+        c.revision,
+      ),
+    );
+  });
+  app.get('/api/backup', async (_req, res) => {
+    const { state } = await getState(db, res.locals.owner);
+    res.setHeader('Content-Disposition', 'attachment; filename="asset-backup.json"');
+    res.json(backup(state));
+  });
+  app.post('/api/plaid/link-token', async (req, res) => {
+    const p = z
+      .object({
+        product: z.enum(['transactions', 'investments']),
+        connectionId: z.string().optional(),
+      })
+      .parse(req.body);
+    const { state } = await getState(db, res.locals.owner);
+    if (state.settings.demo)
+      throw Error('Create a private workspace before connecting Plaid Sandbox');
+    res.json(
+      await createLinkToken(
+        db,
+        provider,
+        res.locals.owner,
+        p.product,
+        p.connectionId,
+        req.header('x-asset-client') === 'ios' ? 'ios' : 'web',
+      ),
+    );
+  });
+  app.post('/api/plaid/exchange', async (req, res) => {
+    const p = z
+      .object({
+        publicToken: z.string(),
+        product: z.enum(['transactions', 'investments']),
+        selected: z.array(z.string()),
+      })
+      .parse(req.body);
+    const { state } = await getState(db, res.locals.owner);
+    if (state.settings.demo) throw Error('Demo cannot connect external data');
+    const id = await exchangeLink(
+      db,
+      provider,
+      res.locals.owner,
+      p.publicToken,
+      p.product,
+      p.selected,
+    );
+    await db.query('INSERT INTO webhook_jobs(id,connection_id,payload) VALUES($1,$2,$3)', [
+      randomUUID(),
+      id,
+      '{}',
+    ]);
+    res.json({ id, status: 'initial_loading' });
+  });
+  app.post('/api/plaid/:id/update-complete', async (req, res) => {
+    const selected = z.array(z.string()).min(1).parse(req.body.selected);
+    const c = await ownedConnection(db, req.params.id as string, res.locals.owner);
+    if (c.status === 'disconnected') throw Error('Connection is disconnected');
+    const metadata = await provider.call('/accounts/get', {
+      access_token: decryptToken(c.encrypted_token),
+    });
+    if (selected.some((id) => !metadata.accounts.some((a: any) => a.account_id === id)))
+      throw Error('Unknown account selection');
+    await db.query(
+      'UPDATE connections SET selected_accounts=$1,cursor=NULL WHERE id=$2 AND owner_id=$3',
+      [JSON.stringify(selected), c.id, res.locals.owner],
+    );
+    res.json(await syncConnection(db, provider, c.id, res.locals.owner));
+  });
+  app.post('/api/plaid/:id/sync', async (req, res) => {
+    res.json(await syncConnection(db, provider, req.params.id as string, res.locals.owner));
+  });
+  app.post('/api/plaid/:id/accounts', async (req, res) => {
+    const selected = z.array(z.string()).parse(req.body.selected);
+    const c = await ownedConnection(db, req.params.id as string, res.locals.owner);
+    await mutateState(db, res.locals.owner, async (s, tx) => {
+      const accounts = s.accounts.filter((a) => a.connectionId === c.id);
+      if (selected.some((id) => !accounts.some((a) => a.providerId === id)))
+        throw Error('Unknown account selection');
+      for (const a of accounts) a.enabled = selected.includes(a.providerId!);
+      await tx.query('UPDATE connections SET selected_accounts=$1 WHERE id=$2 AND owner_id=$3', [
+        JSON.stringify(selected),
+        c.id,
+        res.locals.owner,
+      ]);
+      return s;
+    });
+    res.json({ ok: true });
+  });
+  app.post('/api/plaid/:id/disconnect', async (req, res) => {
+    const remove = z.boolean().parse(req.body.deleteData ?? false);
+    if (remove && req.body.confirm !== 'DELETE') throw Error('Type DELETE to delete imported data');
+    res.json(await disconnect(db, provider, res.locals.owner, req.params.id as string, remove));
+  });
+  app.use('/api', (_req, res) => {
+    res.status(404).json({ error: 'Not found' });
+  });
+  app.use(
+    (error: any, _req: express.Request, res: express.Response, next: express.NextFunction) => {
+      if (res.headersSent) {
+        next(error);
+        return;
+      }
+      res
+        .status(error.status ?? (error instanceof PlaidError ? 503 : 400))
+        .json({
+          error:
+            error instanceof z.ZodError
+              ? error.issues.map((x) => x.message).join('; ')
+              : error instanceof PlaidError
+                ? error.code
+                : (error.message ?? 'Request failed'),
+        });
+    },
+  );
+  return app;
+}

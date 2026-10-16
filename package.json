@@ -1,0 +1,47 @@
+{
+  "name": "asset",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.12"
+  },
+  "scripts": {
+    "dev": "tsx watch server/index.ts",
+    "build": "tsc --noEmit && vite build && node scripts/native-resources.mjs",
+    "start": "NODE_ENV=production tsx server/index.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "native:resources": "node scripts/native-resources.mjs",
+    "test:native": "node scripts/native-parity.mjs",
+    "test:native-store": "node scripts/native-store-tests.mjs",
+    "format": "prettier --write src shared server tests scripts/*.mjs *.json"
+  },
+  "dependencies": {
+    "@electric-sql/pglite": "0.5.10",
+    "express": "5.3.0",
+    "jose": "6.2.12",
+    "lucide-react": "1.57.0",
+    "papaparse": "5.7.0",
+    "pg": "8.23.1",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "react-plaid-link": "5.0.0",
+    "zod": "4.6.7",
+    "tsx": "4.23.15"
+  },
+  "devDependencies": {
+    "@types/express": "5.0.6",
+    "@types/node": "26.6.5",
+    "@types/papaparse": "5.5.2",
+    "@types/pg": "8.23.1",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@vitejs/plugin-react": "6.1.2",
+    "esbuild": "0.28.2",
+    "prettier": "3.9.10",
+    "typescript": "7.0.2",
+    "vite": "8.3.4",
+    "vitest": "5.0.4"
+  }
+}
