@@ -1,13 +1,21 @@
-# Run from the repository root with the xcodeproj Ruby gem installed.
+# Optional project regeneration; normal Xcode builds use the checked-in project.
+# Paths are rooted at this script, so it can run from any directory.
 require 'xcodeproj'
-project = Xcodeproj::Project.new('ios/Asset.xcodeproj')
+root = File.expand_path('..', __dir__)
+project_path = File.join(root, 'Asset.xcodeproj')
+project = Xcodeproj::Project.new(project_path)
 target = project.new_target(:application, 'Asset', :ios, '18.0')
 group = project.main_group.new_group('Asset', 'Asset')
-Dir['ios/Asset/*.swift'].sort.each { |path| target.source_build_phase.add_file_reference(group.new_file(File.basename(path))) }
+['', 'UI', 'Persistence'].each do |directory|
+  source_group = directory.empty? ? group : group.new_group(directory, directory)
+  Dir[File.join(root, 'Asset', directory, '*.swift')].sort.each do |path|
+    target.source_build_phase.add_file_reference(source_group.new_file(File.basename(path)))
+  end
+end
 resources = group.new_group('Resources', 'Resources')
-target.resources_build_phase.add_file_reference(resources.new_file('CalculationEngine.js'))
-['Lato-Regular.ttf','Lato-Medium.ttf','OFL.txt'].each { |name| target.resources_build_phase.add_file_reference(resources.new_file('../../../public/fonts/'+name)) }
-target.resources_build_phase.add_file_reference(resources.new_file('../../../public/third-party-notices.txt'))
+['CalculationEngine.js', 'Lato-Regular.ttf', 'Lato-Medium.ttf', 'OFL.txt', 'third-party-notices.txt'].each do |name|
+  target.resources_build_phase.add_file_reference(resources.new_file(name))
+end
 group.new_file('Info.plist')
 target.resources_build_phase.add_file_reference(group.new_file('Assets.xcassets'))
 package = project.new(Xcodeproj::Project::Object::XCRemoteSwiftPackageReference)
@@ -21,6 +29,10 @@ target.package_product_dependencies << product
 build_file = project.new(Xcodeproj::Project::Object::PBXBuildFile)
 build_file.product_ref = product
 target.frameworks_build_phase.files << build_file
+project.files.select { |file| File.basename(file.path.to_s) == 'Foundation.framework' }.each do |file|
+  file.path = 'System/Library/Frameworks/Foundation.framework'
+  file.source_tree = 'SDKROOT'
+end
 target.build_configurations.each do |config|
   config.build_settings.merge!({
     'PRODUCT_BUNDLE_IDENTIFIER'=>'org.gtfol.asset', 'SWIFT_VERSION'=>'5.0',
@@ -28,11 +40,13 @@ target.build_configurations.each do |config|
     'MARKETING_VERSION'=>'0.1.0', 'CURRENT_PROJECT_VERSION'=>'1',
     'TARGETED_DEVICE_FAMILY'=>'1,2', 'CODE_SIGN_STYLE'=>'Automatic',
     'ENABLE_USER_SCRIPT_SANDBOXING'=>'YES',
-    'ASSETCATALOG_COMPILER_APPICON_NAME'=>'AppIcon'
+    'ASSETCATALOG_COMPILER_APPICON_NAME'=>'AppIcon',
+    'ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME'=>'AccentColor'
   })
 end
+project.predictabilize_uuids if project.respond_to?(:predictabilize_uuids)
 project.save
 scheme = Xcodeproj::XCScheme.new
 scheme.add_build_target(target)
 scheme.set_launch_target(target)
-scheme.save_as('ios/Asset.xcodeproj', 'Asset', true)
+scheme.save_as(project_path, 'Asset', true)

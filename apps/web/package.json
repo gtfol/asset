@@ -8,13 +8,12 @@
   },
   "scripts": {
     "dev": "tsx watch server/index.ts",
-    "build": "tsc --noEmit && vite build && node scripts/native-resources.mjs",
+    "build": "tsc --noEmit && vite build",
     "start": "NODE_ENV=production tsx server/index.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "native:resources": "node scripts/native-resources.mjs",
-    "test:native": "node scripts/native-parity.mjs",
-    "test:native-store": "node scripts/native-store-tests.mjs",
+    "native:check": "node scripts/native-resources.mjs --check",
     "format": "prettier --write src shared server tests scripts/*.mjs *.json"
   },
   "dependencies": {

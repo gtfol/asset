@@ -1,16 +1,17 @@
 # Verification record
 
-October 15–16, 2026. Web tests and production build were re-run October 16 before the initial source push; native automated checks ran October 15 and final native transaction checks completed October 16. This is a working local web/native implementation, not a published service. All financial values in the screenshots and automated tests are synthetic. No private banks, paid services, or Production connections were accessed.
+October 15–16, 2026. Web and native automated checks and builds were re-run October 16 after moving to the Capsule-style repository layout. Final native transaction interaction checks completed October 16 before the folder move. This is a working local web/native implementation, not a published service. All financial values in the screenshots and automated tests are synthetic. No private banks, paid services, or Production connections were accessed.
 
 ## Build and automated results
 
 | Check | Result |
 | --- | --- |
-| `npm test` | **42/42 passing**, three suites. Calculation, CSV/backup, persisted state, owner isolation, native bearer-session revocation, Plaid fixtures, and transaction browsing regressions. Re-run after the transaction performance changes. |
-| `npm run build` | **Pass.** TypeScript check, Vite production bundle, and shared iOS JavaScriptCore bundle. Web JavaScript approximately 438 KB / 131 KB gzip. Re-run after the transaction performance changes and final review safeguards. |
-| `npm run test:native` | **Pass.** Node and JavaScriptCore agree on Dashboard, Cash Flow, net worth, holdings, edit propagation, CSV preview, and full backup restoration. |
-| `npm run test:native-store` | **Pass, 48 checks.** Compiles production Store.swift with the shared engine in a temporary bundle. Covers identities, deterministic order, filters, date groups, paging, state replacement, nested mutations, and cache invalidation without reading or writing an app workspace. |
-| Xcode simulator build | **Pass.** SwiftUI/Charts, iOS 18 minimum target, official LinkKit 7.2.2; built using Xcode 26.6 / iOS 26.5 SDK without distribution signing. The latest build includes transaction caching, automatic loading, review batching, and opaque pinned date headers; it was installed on iPhone 17 Pro and iPad mini simulators. iPad loading/filter/selection/review interactions passed. Final header inspection and iPhone loading/filter/selection checks passed October 16. |
+| `npm test` in `apps/web` | **42/42 passing**, three suites. Calculation, CSV/backup, persisted state, owner isolation, native bearer-session revocation, Plaid fixtures, and transaction browsing regressions. Re-run after the repository move. |
+| `npm run build` in `apps/web` | **Pass.** TypeScript check and Vite production bundle. Web JavaScript approximately 438 KB / 131 KB gzip. A separate fresh install/build containing only the web directory also passed. |
+| `npm run native:check` in `apps/web` | **Pass.** The checked-in native engine, fonts, and license notices match their web sources. This check is separate from the web build. |
+| `node scripts/native-parity.mjs` in `apps/ios` | **Pass.** Node and JavaScriptCore agree on Dashboard, Cash Flow, net worth, holdings, edit propagation, CSV preview, and full backup restoration. No web dependencies are needed by this native runner. |
+| `node scripts/native-store-tests.mjs` in `apps/ios` | **Pass, 48 checks.** Compiles production Store.swift with the checked-in shared engine in a temporary bundle. Covers identities, deterministic order, filters, date groups, paging, state replacement, nested mutations, and cache invalidation without reading or writing an app workspace. |
+| Xcode simulator build | **Pass.** SwiftUI/Charts, iOS 18 minimum target, official LinkKit 7.2.2; built using Xcode 26.6 / iOS 26.5 SDK without distribution signing. The project at `apps/ios/Asset.xcodeproj` builds with self-contained fonts and resources. The preceding transaction-performance build was installed on iPhone 17 Pro and iPad mini; loading/filter/selection/review checks and final date-header inspection passed October 16. |
 | `npm audit` | **0 vulnerabilities** in the checked lockfile on October 15. |
 | Container build | **Not verified.** Docker is installed but its daemon was unavailable. |
 | Plaid Sandbox | **Code and provider fixtures verified; live execution unverified.** Credentials have not been configured. |
@@ -41,6 +42,12 @@ CSV deduplication now uses original import identity through edits, merchant rule
 | Storage | Persisted PostgreSQL backend; protected native local files; separate demo/private workspaces; authenticated shared-server mode | Database reopening and isolation tests pass. Web and native edit persistence observed. Hosted database and signed-device shared login need deployment testing. |
 
 ## Visual and interaction checks
+
+### Repository layout follow-up
+
+The repository now follows Capsule's `apps/web` and `apps/ios` organization, with app-specific READMEs and separate CI workflows. The web package and lockfile live entirely in `apps/web`; Xcode, native resources, scripts, and tests live in `apps/ios`. Vercel's Root Directory is `apps/web`, though its API/worker deployment remains unconfigured. The migration does not move secrets or existing local databases. See [migration notes](repository-migration.md).
+
+The web app passed a fresh isolated install/build without sibling iOS files. Native calculation parity, all 48 store regressions, and the relocated Xcode simulator build passed. The native view extraction and moved Store/screens were compared against the previous commit and preserve the original implementation. Relative documentation links resolve, and native-resource freshness checks pass. Earlier rendered screenshots below remain the visual record; this restructure changes build paths and file organization.
 
 ### Transaction performance follow-up
 

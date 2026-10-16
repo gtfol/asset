@@ -15,7 +15,7 @@ Asset uses the gtfol Freewrite/Capsule design language with a restrained blue ac
 - No ornamental gradients, glass or blur effects, shadows, oversized hero headings, nested dashboard card framing, or remote font service. Native toolbar controls suppress the shared glass background where the platform permits it.
 - Light/dark themes change controls and diagrams; reduced motion disables optional web transitions.
 
-Web styles live in one canonical [stylesheet](../src/style.css), including theme tokens and responsive rules. There is no second override stylesheet. Native shared colors, icons, and section treatments live in [Components.swift](../ios/Asset/Components.swift).
+Web styles live in one canonical [stylesheet](../apps/web/src/style.css), including theme tokens and responsive rules. There is no second override stylesheet. Native shared colors, icons, and section treatments live in [Components.swift](../apps/ios/Asset/UI/Components.swift).
 
 ## Reference sources
 

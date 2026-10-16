@@ -1,0 +1,67 @@
+name: iPhone build and tests
+on:
+  pull_request:
+    paths:
+      - "apps/ios/**"
+      - "apps/web/shared/**"
+      - "apps/web/scripts/native-resources.mjs"
+      - "apps/web/public/fonts/**"
+      - "apps/web/public/third-party-notices.txt"
+      - "apps/web/package*.json"
+      - ".github/workflows/ios.yml"
+  push:
+    branches: [main]
+    paths:
+      - "apps/ios/**"
+      - "apps/web/shared/**"
+      - "apps/web/scripts/native-resources.mjs"
+      - "apps/web/public/fonts/**"
+      - "apps/web/public/third-party-notices.txt"
+      - "apps/web/package*.json"
+      - ".github/workflows/ios.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ios-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  resources:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: apps/web
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+      - run: npm ci
+      - name: Verify native calculation bundle, fonts, and notices
+        run: npm run native:check
+  ios:
+    runs-on: macos-26
+    timeout-minutes: 25
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
+    defaults:
+      run:
+        working-directory: apps/ios
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - name: Compare Node and JavaScriptCore calculations
+        run: node scripts/native-parity.mjs
+      - name: Native transaction store regressions
+        run: node scripts/native-store-tests.mjs
+      - name: Build iPhone and iPad simulator app
+        run: >-
+          xcodebuild -project Asset.xcodeproj -scheme Asset
+          -sdk iphonesimulator -destination 'generic/platform=iOS Simulator'
+          -derivedDataPath "$RUNNER_TEMP/asset-derived"
+          CODE_SIGNING_ALLOWED=NO build

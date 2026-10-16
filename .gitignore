@@ -9,3 +9,8 @@ dist/
 DerivedData/
 xcuserdata/
 .build/
+.vercel/
+coverage/
+test-results/
+*.xcresult/
+*.tsbuildinfo

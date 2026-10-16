@@ -15,7 +15,7 @@ Manual accounts, CSV, budgets, review, holdings, and backups work without creden
 5. Start the backend, create a private Asset workspace, and open Connections. Choose a bank/card **Transactions** flow or a brokerage **Investments** flow. Use only Plaid's documented Sandbox test credentials inside official Link.
 6. Check initial and historical loading, selected accounts, cached balances, review records, holdings timestamps, update mode, and disconnect. Record actual Sandbox results separately from the fixture suite.
 
-Environment placeholders are in [`.env.example`](../.env.example). Asset reads process environment, not `.env` automatically. In this workspace, editing an ignored secrets file requires the owner's explicit permission.
+Environment placeholders are in [`apps/web/.env.example`](../apps/web/.env.example). Asset reads process environment, not `.env` automatically. In this workspace, editing an ignored secrets file requires the owner's explicit permission.
 
 ## Native Link and OAuth
 
@@ -52,13 +52,13 @@ Disconnect calls `/item/remove` before discarding the encrypted token and stoppi
 
 ## Hosting requirements
 
-Use one continuously running Node service with persistent PostgreSQL and HTTPS. `npm run build` builds the web client; `npm start` serves it, the API, and the worker. The Dockerfile provides this service shape; its container build has not yet been executed in this environment.
+Use one continuously running Node service with persistent PostgreSQL and HTTPS. Run commands inside `apps/web`: `npm run build` builds the web client; `npm start` serves it, the API, and the worker. The `apps/web/Dockerfile` uses `apps/web` as its build context and provides this service shape; its container build has not yet been executed in this environment.
 
 For embedded PostgreSQL, mount `/app/data` persistently and run only one service against that PGlite directory. For a hosted database, set `DATABASE_URL` to a dedicated TLS-protected PostgreSQL connection, including a dedicated Supabase database if desired. Only the backend should have database credentials. The migration enables RLS with no client policies; backend ownership/privileges and SQL owner checks enforce access. Do not expose these tables through Supabase client keys or reuse a database containing unrelated application data without reviewing migrations.
 
 Set `APP_ORIGIN` to the web HTTPS origin and `HOST` appropriately. The supplied server defaults to loopback for local work. Browser sessions use HttpOnly, SameSite=Strict cookies and Secure cookies in production; native sessions use Keychain-held bearer tokens. Financial API responses are not cached. Use a private backup strategy for the database plus encryption key, and validate recovery before relying on it.
 
-A Vercel-only request-function deployment is not configured: the current durable worker needs a continuously running backend or a deliberate job-platform adaptation. Supabase is optional storage, not a requirement for local use. Public registration, abuse protection, recovery/email verification, reverse-proxy limits, secret rotation, observability, and operational backups need review before a public service. This release is a local/personal application, not a certified multi-tenant financial service.
+A Vercel-only request-function deployment is not configured. Set the Vercel Root Directory to `apps/web`; the API still needs a function entry point, and the current durable worker needs a continuously running backend or a deliberate job-platform adaptation. Supabase is optional storage, not a requirement for local use. Public registration, abuse protection, recovery/email verification, reverse-proxy limits, secret rotation, observability, and operational backups need review before a public service. This release is a local/personal application, not a certified multi-tenant financial service.
 
 ## Separate live-access gate
 

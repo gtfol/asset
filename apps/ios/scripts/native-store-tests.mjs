@@ -1,27 +1,19 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { copyFile, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
-import { build } from 'esbuild';
+const nativeRoot = fileURLToPath(new URL('../', import.meta.url));
 
 if (process.platform !== 'darwin') {
   throw new Error('Native Store regression checks require macOS and Xcode command line tools.');
 }
 const directory = await mkdtemp(join(tmpdir(), 'asset-native-store-'));
 try {
-  await build({
-    stdin: {
-      contents:
-        'export * from "./shared/core";export * from "./shared/demo";export * from "./shared/csv";',
-      resolveDir: process.cwd(),
-    },
-    bundle: true,
-    format: 'iife',
-    globalName: 'AssetCore',
-    target: 'es2020',
-    outfile: join(directory, 'CalculationEngine.js'),
-    minify: true,
-  });
+  await copyFile(
+    join(nativeRoot, 'Asset/Resources/CalculationEngine.js'),
+    join(directory, 'CalculationEngine.js'),
+  );
   const executable = join(directory, 'asset-native-store-tests');
   const compile = spawnSync(
     'xcrun',
@@ -30,8 +22,8 @@ try {
       '-O',
       '-swift-version',
       '5',
-      resolve('ios/Asset/Store.swift'),
-      resolve('tests/NativeStoreTests.swift'),
+      join(nativeRoot, 'Asset/Persistence/Store.swift'),
+      join(nativeRoot, 'AssetTests/NativeStoreTests.swift'),
       '-o',
       executable,
     ],
