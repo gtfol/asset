@@ -14,7 +14,7 @@ for (const [path, pkg] of Object.entries(lock.packages)) {
   const content = [];
   for (const file of licenses) {
     try {
-      content.push((await readFile(`${path}/${file}`, 'utf8')).replace(/\r\n/g, '\n'));
+      content.push((await readFile(`${path}/${file}`, 'utf8')).replace(/\r\n/g, '\n').replace(/[ \t]+$/gm, ''));
     } catch {
       /* directories are not notices */
     }

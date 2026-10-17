@@ -477,7 +477,7 @@ export function ConnectionsDialog({
           {busy}
         </p>
       )}
-      <VenmoConnection state={state} sessionId={sessionId} load={load} />
+      <VenmoConnection key={sessionId} state={state} sessionId={sessionId} load={load} />
       <AccountLinks state={state} run={run} disabled={locked} />
       {connections.map((c) => (
         <section className="connection-card" key={c.id}>

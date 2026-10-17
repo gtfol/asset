@@ -89,7 +89,11 @@ struct VenmoConnectionView: View {
       if account.isEmpty { account = available.first { $0.text("name").localizedCaseInsensitiveContains("venmo") }?.id ?? "" }
       perform()
     }
-    .onDisappear { active = false }
+    .onDisappear { active = false; busy = false }
+    .onChange(of: store.workspaceGeneration) { _, _ in
+      inbox = [:]; selected = nil; email = ""; account = ""; error = ""; busy = false
+      perform()
+    }
     .sheet(item: $selected) { receipt in
       NavigationStack {
         VenmoReceiptView(receipt: receipt,
