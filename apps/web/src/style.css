@@ -1874,7 +1874,8 @@ td {
 }
 .welcome-card .brand {
   padding: 0;
-  margin-bottom: 38px;
+  height: auto;
+  margin: 0 0 12px;
 }
 .welcome-card h1 {
   line-height: 1.18;
@@ -1887,6 +1888,10 @@ td {
 .welcome-card > p {
   color: var(--muted);
   font-size: 12px;
+}
+.wallet-address {
+  overflow-wrap: anywhere;
+  font-variant-numeric: tabular-nums;
 }
 .welcome-card > .primary {
   margin-top: 15px;
@@ -2313,7 +2318,7 @@ dialog label {
     max-width: 480px;
   }
   .welcome-card .brand {
-    margin-bottom: 32px;
+    margin-bottom: 12px;
   }
   .form-grid {
     gap: 0 12px;

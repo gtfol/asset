@@ -232,6 +232,26 @@ struct TransactionForm: View {
     }
   }
 }
+struct BitcoinAddressForm: View {
+  @EnvironmentObject var store: Store
+  @State var name = ""
+  @State var address = ""
+  var body: some View {
+    FormShell(title: "Track Bitcoin address", save: {
+      try await store.bitcoinRequest("/bitcoin/wallets", body: ["name": name, "address": address])
+    }) {
+      Section {
+        TextField("Name", text: $name)
+        TextField("Public Bitcoin address", text: $address)
+          .textInputAutocapitalization(.never).autocorrectionDisabled()
+      }
+      Section {
+        Text("Read-only tracking. Never enter a private key or recovery phrase. Add each receiving or change address you want included; a single address may not cover your whole wallet.")
+        Text("The public address is sent to Blockstream for balances and history. USD prices come from Coinbase. No Plaid connection is used.")
+      }.font(.custom("Lato-Regular", size: 13, relativeTo: .caption)).foregroundStyle(Color.assetSecondary)
+    }
+  }
+}
 struct AccountForm: View {
   @EnvironmentObject var store: Store
   var account: Row?
@@ -244,6 +264,7 @@ struct AccountForm: View {
   @State var end = ""
   @State var complete = false
   @State var loaded = false
+  var connected: Bool { ["plaid", "bitcoin"].contains(account?.text("source") ?? "") }
   var body: some View {
     FormShell(
       title: account == nil ? "Add manual account" : "Edit account",
@@ -270,19 +291,19 @@ struct AccountForm: View {
           ForEach(["checking", "savings", "credit", "investment", "loan", "manual"], id: \.self) {
             Text($0.capitalized)
           }
-        }.disabled(account?.text("source") == "plaid")
+        }.disabled(connected)
         TextField("Balance", text: $balance).keyboardType(.numbersAndPunctuation).disabled(
-          account?.text("source") == "plaid")
+          connected)
         Picker("Currency", selection: $currency) {
           ForEach(["USD", "CAD", "EUR", "GBP"], id: \.self) { Text($0) }
-        }.disabled(account?.text("source") == "plaid")
+        }.disabled(connected)
         Toggle("Include in net worth", isOn: $included)
         Text(
           "Enter debt as a positive amount owed. Saving a balance records a dated snapshot. Transactions do not silently change manual balances."
         ).font(.custom("Lato-Regular", size: 13, relativeTo: .caption)).foregroundStyle(
           Color.assetSecondary)
       }
-      if account?.text("source") != "plaid" {
+      if !connected {
         Section("Transaction history coverage") {
           TextField("Start · YYYY-MM-DD", text: $start)
           TextField("End · YYYY-MM-DD", text: $end)
@@ -383,7 +404,7 @@ struct HoldingForm: View {
       save: {
         guard
           let a = store.accounts.first(where: {
-            $0.id == account && $0.text("type") == "investment"
+            $0.id == account && $0.text("type") == "investment" && $0.text("source") != "bitcoin"
           })
         else { throw failure("Add an investment account first") }
         @MainActor func optional(_ v: String) throws -> Any {
@@ -403,7 +424,7 @@ struct HoldingForm: View {
         TextField("Ticker", text: $symbol)
         TextField("Security name", text: $name)
         Picker("Account", selection: $account) {
-          ForEach(store.accounts.filter { $0.text("type") == "investment" }) {
+          ForEach(store.accounts.filter { $0.text("type") == "investment" && $0.text("source") != "bitcoin" }) {
             Text($0.text("name")).tag($0.id)
           }
         }
@@ -422,7 +443,7 @@ struct HoldingForm: View {
     }.onAppear {
       guard !loaded else { return }
       loaded = true
-      account = store.accounts.first { $0.text("type") == "investment" }?.id ?? ""
+      account = store.accounts.first { $0.text("type") == "investment" && $0.text("source") != "bitcoin" }?.id ?? ""
       if let h = holding {
         symbol = h.text("symbol")
         name = h.text("name")

@@ -521,6 +521,7 @@ export function AccountEditor({
 }) {
   const a = state.accounts.find((a) => a.id === id),
     [error, setError] = useState('');
+  const connected = a?.source === 'plaid' || a?.source === 'bitcoin';
   return (
     <Modal title={a ? 'Edit account' : 'Add manual account'} onClose={onClose}>
       <form
@@ -534,16 +535,15 @@ export function AccountEditor({
                 ...a,
                 id: a?.id ?? uid(),
                 name: f.get('name'),
-                type: a?.source === 'plaid' ? a.type : f.get('type'),
-                currency: a?.source === 'plaid' ? a.currency : f.get('currency'),
-                balance: a?.source === 'plaid' ? a.balance : parseMoney(String(f.get('balance'))),
+                type: connected ? a.type : f.get('type'),
+                currency: connected ? a.currency : f.get('currency'),
+                balance: connected ? a.balance : parseMoney(String(f.get('balance'))),
                 includeInNetWorth: f.get('included') === 'on',
                 enabled: a?.enabled ?? true,
                 source: a?.source ?? 'manual',
                 updatedAt: new Date().toISOString(),
-                coverageComplete:
-                  a?.source === 'plaid' ? a.coverageComplete : f.get('complete') === 'on',
-                ...(a?.source === 'plaid'
+                coverageComplete: connected ? a.coverageComplete : f.get('complete') === 'on',
+                ...(connected
                   ? {}
                   : {
                       coverageStart: f.get('coverageStart') || undefined,
@@ -563,7 +563,7 @@ export function AccountEditor({
         </label>
         <label>
           Type
-          <select name="type" disabled={a?.source === 'plaid'} defaultValue={a?.type ?? 'checking'}>
+          <select name="type" disabled={connected} defaultValue={a?.type ?? 'checking'}>
             {['checking', 'savings', 'credit', 'investment', 'loan', 'manual'].map((t) => (
               <option key={t}>{t}</option>
             ))}
@@ -574,7 +574,7 @@ export function AccountEditor({
             Balance
             <input
               name="balance"
-              disabled={a?.source === 'plaid'}
+              disabled={connected}
               inputMode="decimal"
               defaultValue={(a?.balance ?? 0) / 100}
               required
@@ -582,11 +582,7 @@ export function AccountEditor({
           </label>
           <label>
             Currency
-            <select
-              name="currency"
-              disabled={a?.source === 'plaid'}
-              defaultValue={a?.currency ?? 'USD'}
-            >
+            <select name="currency" disabled={connected} defaultValue={a?.currency ?? 'USD'}>
               {['USD', 'CAD', 'EUR', 'GBP'].map((c) => (
                 <option key={c}>{c}</option>
               ))}
@@ -601,7 +597,7 @@ export function AccountEditor({
           <input name="included" type="checkbox" defaultChecked={a?.includeInNetWorth ?? true} />
           Include in net worth
         </label>
-        {a?.source !== 'plaid' && (
+        {!connected && (
           <>
             <div className="form-grid">
               <label>
@@ -643,7 +639,7 @@ export function HoldingEditor({
 }) {
   const h = state.holdings.find((h) => h.id === id),
     [error, setError] = useState(''),
-    accounts = state.accounts.filter((a) => a.type === 'investment');
+    accounts = state.accounts.filter((a) => a.type === 'investment' && a.source !== 'bitcoin');
   return (
     <Modal title={h ? 'Edit holding' : 'Add a holding'} onClose={onClose}>
       {accounts.length === 0 ? (

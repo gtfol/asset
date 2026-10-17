@@ -17,6 +17,7 @@ import {
   type Kind,
 } from './schema.js';
 export * from './schema.js';
+export * from './bitcoin.js';
 export const money = (cents: number | null, currency = 'USD') =>
   cents === null
     ? 'Unavailable'
@@ -276,13 +277,25 @@ export function netWorth(s: State) {
       s.snapshots.filter((p) => list.some((a) => a.id === p.accountId)).map((p) => p.date),
     ),
   ].sort();
+  const histories = new Map(
+    list.map((a) => {
+      const firstByDate = new Map<string, State['snapshots'][number]>();
+      for (const p of s.snapshots)
+        if (p.accountId === a.id && p.currency === currency && !firstByDate.has(p.date))
+          firstByDate.set(p.date, p);
+      return [a.id, [...firstByDate.values()].sort((a, b) => a.date.localeCompare(b.date))];
+    }),
+  );
+  const positions = new Map(list.map((a) => [a.id, -1]));
   const history = dates.map((date) => {
     let v = 0;
     let known = 0;
     for (const a of list) {
-      const p = s.snapshots
-        .filter((p) => p.accountId === a.id && p.currency === currency && p.date <= date)
-        .sort((a, b) => b.date.localeCompare(a.date))[0];
+      const snapshots = histories.get(a.id)!;
+      let index = positions.get(a.id)!;
+      while (index + 1 < snapshots.length && snapshots[index + 1].date <= date) index++;
+      positions.set(a.id, index);
+      const p = snapshots[index];
       if (p) {
         known++;
         v += (a.type === 'credit' || a.type === 'loan' ? -1 : 1) * p.balance;
@@ -494,11 +507,12 @@ export function applyCommand(input: State, command: Command): State {
     case 'account.save': {
       const a = accountSchema.parse(p);
       const existing = s.accounts.find((x) => x.id === a.id);
-      if (existing?.source === 'plaid') {
+      if (existing?.source === 'plaid' || existing?.source === 'bitcoin') {
         existing.includeInNetWorth = a.includeInNetWorth;
         existing.name = a.name;
       } else {
-        if (a.source === 'plaid') throw Error('Use Plaid Link to create connected accounts');
+        if (a.source === 'plaid' || a.source === 'bitcoin')
+          throw Error('Use the connection flow to create tracked accounts');
         s.accounts = s.accounts.filter((x) => x.id !== a.id);
         s.accounts.push(a);
         if (a.balance !== null) {
@@ -518,7 +532,13 @@ export function applyCommand(input: State, command: Command): State {
     }
     case 'holding.save': {
       const h = holdingSchema.parse(p);
-      if (h.source === 'plaid') throw Error('Provider holdings cannot be manually overwritten');
+      if (
+        h.source === 'plaid' ||
+        h.source === 'bitcoin' ||
+        s.holdings.some((x) => x.id === h.id && ['plaid', 'bitcoin'].includes(x.source)) ||
+        s.accounts.some((a) => a.id === h.accountId && a.source === 'bitcoin')
+      )
+        throw Error('Provider holdings cannot be manually overwritten');
       s.holdings = s.holdings.filter((x) => x.id !== h.id);
       s.holdings.push(h);
       const date = today(s.settings.timezone);
@@ -535,7 +555,12 @@ export function applyCommand(input: State, command: Command): State {
     }
     case 'snapshot.save': {
       const snap = snapshotSchema.parse(p);
-      if (snap.source === 'plaid') throw Error('Provider snapshots are managed by sync');
+      if (
+        snap.source === 'plaid' ||
+        snap.source === 'bitcoin' ||
+        s.accounts.some((a) => a.id === snap.accountId && a.source === 'bitcoin')
+      )
+        throw Error('Provider snapshots are managed by sync');
       s.snapshots = s.snapshots.filter(
         (x) => x.accountId !== snap.accountId || x.date !== snap.date,
       );
@@ -551,6 +576,15 @@ export function applyCommand(input: State, command: Command): State {
     case 'rule.delete':
       s.rules = s.rules.filter((r) => r.id !== id);
       break;
+    case 'bitcoin.disconnect': {
+      const a = s.accounts.find((a) => a.id === id && a.source === 'bitcoin');
+      if (!a) throw Error('Bitcoin address not found');
+      a.source = 'manual';
+      delete a.bitcoin;
+      for (const h of [...s.holdings, ...s.holdingSnapshots, ...s.snapshots])
+        if (h.accountId === id && h.source === 'bitcoin') h.source = 'manual';
+      break;
+    }
     case 'settings.save':
       s.settings = {
         ...s.settings,

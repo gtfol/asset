@@ -60,6 +60,7 @@ import {
   type TransactionIndexEntry,
 } from './transactions';
 import { clearPlaidAttempt } from './plaid-link';
+import { BitcoinAdd, BitcoinDetail, type BitcoinRequest } from './bitcoin';
 export async function api(
   path: string,
   body?: unknown,
@@ -116,11 +117,15 @@ export function App() {
   const openedPlaidReturn = useRef(false);
   const revisionRef = useRef(0);
   const sessionGeneration = useRef(0);
+  const latestState = useRef(state);
+  latestState.current = state;
+  const [bitcoinError, setBitcoinError] = useState('');
   const load = useCallback(async () => {
     const generation = sessionGeneration.current;
     try {
       const r = await api('/state');
       if (generation !== sessionGeneration.current) return;
+      if (r.revision < revisionRef.current) return;
       if (revisionRef.current === 0) setMonth(today(r.state.settings.timezone).slice(0, 7));
       setState(r.state);
       setRevision(r.revision);
@@ -142,6 +147,56 @@ export function App() {
       if (generation === sessionGeneration.current) setLoading(false);
     }
   }, []);
+  const bitcoinRequest: BitcoinRequest = useCallback(
+    async (path, body = {}) => {
+      const generation = sessionGeneration.current;
+      const r = await api(path, body, 'POST', sessionId);
+      if (generation !== sessionGeneration.current)
+        throw Error('Workspace changed during Bitcoin sync');
+      if (r.revision >= revisionRef.current) {
+        setState(r.state);
+        setRevision(r.revision);
+        revisionRef.current = r.revision;
+      }
+    },
+    [sessionId],
+  );
+  const bitcoinAccounts =
+    state?.accounts
+      .filter((a) => a.bitcoin)
+      .map((a) => a.id)
+      .join(',') ?? '';
+  useEffect(() => {
+    if (!bitcoinAccounts || !sessionId || state?.settings.demo) return;
+    let cancelled = false,
+      running = false;
+    const tick = async () => {
+      if (cancelled || running || document.visibilityState === 'hidden') return;
+      running = true;
+      try {
+        await bitcoinRequest('/bitcoin/refresh');
+        for (const a of latestState.current?.accounts ?? []) {
+          if (cancelled) break;
+          if (a.bitcoin && Date.now() - Date.parse(a.bitcoin.syncedAt) >= 5 * 60000)
+            await bitcoinRequest(`/bitcoin/wallets/${a.id}/sync`);
+        }
+        if (!cancelled) setBitcoinError('');
+      } catch (e) {
+        if (!cancelled) setBitcoinError((e as Error).message);
+      } finally {
+        running = false;
+      }
+    };
+    void tick();
+    const timer = setInterval(() => void tick(), 60000);
+    const wake = () => void tick();
+    document.addEventListener('visibilitychange', wake);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+      document.removeEventListener('visibilitychange', wake);
+    };
+  }, [bitcoinAccounts, sessionId, bitcoinRequest, state?.settings.demo]);
   useEffect(() => {
     void load();
   }, [load]);
@@ -157,9 +212,11 @@ export function App() {
       try {
         const r = await api('/command', { ...command, revision: revisionRef.current });
         if (generation !== sessionGeneration.current) throw Error('Workspace changed while saving');
-        setState(r.state);
-        setRevision(r.revision);
-        revisionRef.current = r.revision;
+        if (r.revision >= revisionRef.current) {
+          setState(r.state);
+          setRevision(r.revision);
+          revisionRef.current = r.revision;
+        }
         setNotice('Changes saved');
       } catch (e: any) {
         if (generation !== sessionGeneration.current) throw e;
@@ -611,6 +668,9 @@ export function App() {
             setSelected={setSelected}
             edit={(id) => setModal({ kind: 'account', id })}
             drill={txNavigate}
+            addBitcoin={() => setModal({ kind: 'bitcoin' })}
+            bitcoinRequest={bitcoinRequest}
+            bitcoinError={bitcoinError}
           />
         )}
         {page === 'Investments' && (
@@ -648,6 +708,9 @@ export function App() {
       )}
       {modal?.kind === 'account' && (
         <AccountEditor state={state} run={run} id={modal.id} onClose={() => setModal(null)} />
+      )}
+      {modal?.kind === 'bitcoin' && (
+        <BitcoinAdd onRequest={bitcoinRequest} onClose={() => setModal(null)} />
       )}
       {modal?.kind === 'holding' && (
         <HoldingEditor state={state} run={run} id={modal.id} onClose={() => setModal(null)} />
@@ -1430,6 +1493,9 @@ function Accounts({
   setSelected,
   edit,
   drill,
+  addBitcoin,
+  bitcoinRequest,
+  bitcoinError,
 }: {
   state: State;
   run: Run;
@@ -1437,6 +1503,9 @@ function Accounts({
   setSelected: (id: string) => void;
   edit: (id: string) => void;
   drill: (f: Record<string, string>) => void;
+  addBitcoin: () => void;
+  bitcoinRequest: BitcoinRequest;
+  bitcoinError: string;
 }) {
   const worth = netWorth(state),
     a = state.accounts.find((a) => a.id === selected),
@@ -1444,9 +1513,16 @@ function Accounts({
   return (
     <div className="content">
       <div className="page-heading">
-        <div></div>
+        <button className="text-button" onClick={addBitcoin} disabled={state.settings.demo}>
+          Track Bitcoin address
+        </button>
         <span className="muted tiny">Reporting in {state.settings.currency}</span>
       </div>
+      {bitcoinError && (
+        <p className="warning" role="status">
+          Bitcoin: {bitcoinError}
+        </p>
+      )}
       {worth.otherCurrencies.length > 0 && (
         <p className="warning">
           {worth.otherCurrencies.join(', ')} accounts are displayed separately and excluded from{' '}
@@ -1485,7 +1561,9 @@ function Accounts({
                                 ? 'Manual account'
                                 : a.source === 'csv'
                                   ? 'CSV import'
-                                  : 'Plaid cached balance'}{' '}
+                                  : a.source === 'bitcoin'
+                                    ? 'Bitcoin address'
+                                    : 'Plaid cached balance'}{' '}
                             · {a.mask ?? a.currency}
                             {!a.enabled ? ' · Sync account disabled' : ''}
                           </small>
@@ -1543,6 +1621,15 @@ function Accounts({
                 label={`${a.name} balance history`}
               />
               <RangeControl value={range} onChange={setRange} />
+              {a.bitcoin && (
+                <BitcoinDetail
+                  key={a.id}
+                  account={a}
+                  state={state}
+                  onRequest={bitcoinRequest}
+                  stop={() => run({ type: 'bitcoin.disconnect', payload: { id: a.id } })}
+                />
+              )}
               <label className="check-label">
                 <input
                   type="checkbox"
@@ -1563,18 +1650,22 @@ function Accounts({
                 Related transactions
                 <ChevronRight size={14} />
               </button>
-              <div className="divider" />
-              <h3>History coverage</h3>
-              <p className="muted tiny">
-                {a.coverageStart
-                  ? `${a.coverageStart} to ${a.coverageEnd}`
-                  : 'Coverage not established'}
-                {!a.coverageComplete ? ' · incomplete' : ''}
-              </p>
-              <p className="tiny muted">
-                Balance history contains recorded snapshots only. Earlier balances are not inferred
-                from transactions.
-              </p>
+              {!a.bitcoin && (
+                <>
+                  <div className="divider" />
+                  <h3>History coverage</h3>
+                  <p className="muted tiny">
+                    {a.coverageStart
+                      ? `${a.coverageStart} to ${a.coverageEnd}`
+                      : 'Coverage not established'}
+                    {!a.coverageComplete ? ' · incomplete' : ''}
+                  </p>
+                  <p className="tiny muted">
+                    Balance history contains recorded snapshots only. Earlier balances are not
+                    inferred from transactions.
+                  </p>
+                </>
+              )}
             </>
           ) : (
             <Empty title="Select an account">
@@ -1724,7 +1815,7 @@ function Investments({
             <>
               <div className="detail-heading">
                 <span className="muted">{h.type}</span>
-                {h.source !== 'plaid' && (
+                {h.source !== 'plaid' && h.source !== 'bitcoin' && (
                   <button className="text-button" onClick={() => edit(h.id)}>
                     Edit holding
                   </button>
@@ -1749,8 +1840,10 @@ function Investments({
                 <dd>{h.gainPercent === null ? 'Unavailable' : h.gainPercent.toFixed(2) + '%'}</dd>
               </dl>
               <p className="tiny muted">
-                Position gain is not your portfolio's cash-flow-adjusted return. No real-time quote
-                feed is connected.
+                Position gain is not your portfolio's cash-flow-adjusted return.{' '}
+                {h.source === 'bitcoin'
+                  ? 'Bitcoin quotes refresh every minute while Asset is open. Address details and historical prices are in Accounts.'
+                  : 'No real-time quote feed is connected for this holding.'}
               </p>
               <h3>Account</h3>
               <p>{state.accounts.find((a) => a.id === h.accountId)?.name}</p>

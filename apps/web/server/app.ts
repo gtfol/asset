@@ -5,6 +5,7 @@ import { applyCommand, backup, validateState, type Command } from '../shared/cor
 import { createDemo } from '../shared/demo.js';
 import { getState, mutateState, type Database } from './db.js';
 import { authenticated, newSession, readToken, tokenHash } from './auth.js';
+import { bitcoinRoutes, type BitcoinProvider } from './bitcoin.js';
 import {
   PlaidClient,
   assertConnectionEnvironment,
@@ -37,6 +38,7 @@ export function createApp(
   db: Database,
   provider?: PlaidProvider,
   google: GoogleProvider = new GoogleOAuth(),
+  bitcoin?: BitcoinProvider,
 ) {
   const resolveProvider = async (owner: string) => provider ?? userPlaidProvider(db, owner);
   const requestProvider = async (owner: string) =>
@@ -174,6 +176,20 @@ export function createApp(
     res.status(410).json({ error: 'Email sign-in is no longer supported. Continue with Google.' });
   });
   app.use('/api', authenticated(db));
+  app.use('/api/bitcoin', (req, res, next) => {
+    const expected = req.header('x-asset-session');
+    if (
+      expected !== undefined &&
+      expected !== tokenHash('plaid-context:' + (readToken(req) ?? ''))
+    ) {
+      res
+        .status(409)
+        .json({ error: 'Your sign-in changed. Reload Asset before managing Bitcoin addresses.' });
+      return;
+    }
+    next();
+  });
+  app.use('/api/bitcoin', bitcoinRoutes(db, bitcoin));
   app.post('/api/auth/logout', async (req, res) => {
     await db.query('DELETE FROM sessions WHERE token_hash=$1', [tokenHash(readToken(req) ?? '')]);
     res.clearCookie('asset_session', { path: '/' });

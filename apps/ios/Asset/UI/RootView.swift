@@ -2,6 +2,7 @@ import SwiftUI
 
 struct RootView: View {
   @EnvironmentObject var store: Store
+  @Environment(\.scenePhase) var scenePhase
   @State var page = "Dashboard"
   @State var month = String(dateToday().prefix(7))
   @State var settings = false
@@ -76,6 +77,12 @@ struct RootView: View {
               }
             }
             .task { await store.refresh() }
+            .task(id: scenePhase) {
+              while scenePhase == .active && !Task.isCancelled {
+                await store.refreshBitcoin()
+                do { try await Task.sleep(for: .seconds(60)) } catch { return }
+              }
+            }
         }
       }
     }.alert(

@@ -279,6 +279,7 @@ enum SessionKey {
   private var cachedCategoriesByID: [String: Row]?
   @Published var mode = ""
   @Published var error = ""
+  @Published var bitcoinError = ""
   @Published var busy = false
   @Published var connections: [Row] = []
   @Published var configured = false
@@ -503,10 +504,12 @@ enum SessionKey {
         guard mode == "remote", generation == workspaceGeneration else {
           throw failure("Workspace changed while the update was saving")
         }
+        let nextRevision = r["revision"] as? Int ?? 0
+        guard nextRevision >= revision else { return }
         let next = try engine.call("validateState", [r["state"] as? JSON ?? [:]]) as? JSON ?? [:]
         try persist(next)
         state = next
-        revision = r["revision"] as? Int ?? 0
+        revision = nextRevision
       } catch {
         if generation == workspaceGeneration { await refresh() }
         throw error
@@ -521,6 +524,42 @@ enum SessionKey {
   func perform(_ type: String, _ payload: JSON) {
     Task {
       do { try await command(type, payload) } catch { self.error = error.localizedDescription }
+    }
+  }
+  func bitcoinRequest(_ path: String, body: JSON = [:]) async throws {
+    guard mode == "remote", !isDemo else { throw failure("Sign in to track a real Bitcoin address") }
+    let generation = workspaceGeneration
+    let server = baseURL
+    let token = SessionKey.read()
+    let r = try await request(path, body: body, server: server, token: token)
+    guard mode == "remote", generation == workspaceGeneration, server == baseURL,
+      token == SessionKey.read() else { throw failure("Workspace changed during Bitcoin sync") }
+    let nextRevision = r["revision"] as? Int ?? 0
+    guard nextRevision >= revision else { return }
+    let next = try engine.call("validateState", [r["state"] as? JSON ?? [:]]) as? JSON ?? [:]
+    try persist(next)
+    state = next
+    revision = nextRevision
+  }
+  func refreshBitcoin() async {
+    guard mode == "remote", !isDemo, !busy,
+      accounts.contains(where: { $0.text("source") == "bitcoin" }) else { return }
+    let generation = workspaceGeneration
+    do {
+      try await bitcoinRequest("/bitcoin/refresh")
+      for a in accounts.filter({ $0.text("source") == "bitcoin" }) {
+        try Task.checkCancellation()
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let checked = formatter.date(from: a.object("bitcoin").text("syncedAt")) ?? .distantPast
+        if Date().timeIntervalSince(checked) >= 300 {
+          try await bitcoinRequest("/bitcoin/wallets/\(a.id)/sync")
+        }
+      }
+      if generation == workspaceGeneration { bitcoinError = "" }
+    } catch is CancellationError {
+    } catch {
+      if generation == workspaceGeneration { bitcoinError = error.localizedDescription }
     }
   }
   func export(backup: Bool) throws -> URL {

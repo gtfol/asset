@@ -312,10 +312,16 @@ struct CategoryDetail: View {
 struct AccountsView: View {
   @EnvironmentObject var store: Store
   @State var range = "1Y"
+  @State var addBitcoin = false
   var body: some View {
     let w = store.calculation("netWorth")
     ScrollView {
       VStack(spacing: 16) {
+        Button("Track Bitcoin address") { addBitcoin = true }
+          .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+          .disabled(store.mode != "remote" || store.isDemo)
+        if store.mode != "remote" { Text("Sign in to track live Bitcoin balances.").font(.caption).foregroundStyle(Color.assetSecondary) }
+        if !store.bitcoinError.isEmpty { Text(store.bitcoinError).foregroundStyle(Color.assetError) }
         Card(title: "Net worth") {
           Metric(
             title: "\(store.currency) · assets minus debt",
@@ -376,7 +382,7 @@ struct AccountsView: View {
             description: Text("Tap + to add a manual account, or open Connections in Settings."))
         }
       }.padding(20)
-    }
+    }.sheet(isPresented: $addBitcoin) { BitcoinAddressForm() }
   }
 }
 struct AccountDetail: View {
@@ -411,6 +417,8 @@ struct AccountDetail: View {
             .custom("Lato-Regular", size: 13, relativeTo: .caption)
           ).foregroundStyle(Color.assetSecondary)
         }
+        if a.text("source") == "bitcoin" { BitcoinAccountDetail(account: a) }
+        if a.text("source") != "bitcoin" {
         Card(title: "History coverage") {
           Text(a.text("coverageStart", "Unknown") + " to " + a.text("coverageEnd", "unknown"))
           StatusLabel(
@@ -419,11 +427,60 @@ struct AccountDetail: View {
             .custom("Lato-Regular", size: 13, relativeTo: .caption)
           ).foregroundStyle(Color.assetSecondary)
         }
+        }
         NavigationLink("Related transactions") { TransactionsView(initialAccount: accountID) }
           .frame(minHeight: 44)
         Button("Edit account") { edit = true }.frame(minHeight: 44)
       }.padding(20)
     }.assetTitle(a.text("name")).sheet(isPresented: $edit) { AccountForm(account: a) }
+  }
+}
+struct BitcoinAccountDetail: View {
+  @EnvironmentObject var store: Store
+  let account: Row
+  @State var range = "1Y"
+  @State var busy = false
+  @State var error = ""
+  var body: some View {
+    let wallet = account.object("bitcoin")
+    let market = store.row.object("bitcoinMarket")
+    Card(title: "Bitcoin address") {
+      Text(wallet.text("address")).textSelection(.enabled).font(.caption)
+      LabeledContent("Confirmed BTC", value: String(format: "%.8f", wallet.number("satoshis") / 100000000))
+      LabeledContent("Pending BTC", value: String(format: "%.8f", wallet.number("pendingSatoshis") / 100000000))
+      LabeledContent("BTC / USD", value: money(market.data["price"], "USD"))
+      let quoteDate: Date = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter.date(from: market.text("updatedAt")) ?? .distantPast
+      }()
+      if Date().timeIntervalSince(quoteDate) > 900 {
+        Text("Saved price is out of date. Refresh to update the valuation.").font(.caption).foregroundStyle(Color.assetError)
+      }
+      Text("Balance checked \(wallet.text("syncedAt")). Pending transfers are excluded from net worth.")
+        .font(.caption).foregroundStyle(Color.assetSecondary)
+      Button(busy ? "Refreshing…" : "Refresh Bitcoin") {
+        busy = true
+        Task {
+          do {
+            try await store.bitcoinRequest("/bitcoin/wallets/\(account.id)/sync")
+            try await store.bitcoinRequest("/bitcoin/refresh")
+            error = ""
+          } catch { self.error = error.localizedDescription }
+          busy = false
+        }
+      }.disabled(busy || store.mode != "remote").frame(minHeight: 44)
+      if !error.isEmpty { Text(error).foregroundStyle(Color.assetError) }
+      Text("Bitcoin price history").font(.custom("Lato-Medium", size: 15, relativeTo: .subheadline))
+      HistoryChart(points: historyPoints(market.rows("history"), key: "price", range: range), currency: "USD")
+      RangePicker(range: $range)
+      Text("Coinbase daily closes in UTC, including available history back to 2015. Quote: \(market.text("updatedAt")). Quotes refresh every minute while Asset is open; balances every five minutes.")
+        .font(.caption).foregroundStyle(Color.assetSecondary)
+      Text("Wallet history uses the confirmed BTC held on each date. \(wallet.flag("historyComplete") ? "Loaded" : "Partial") history starts \(wallet.text("historyStart")). Missing prices are omitted. A transfer does not establish your purchase cost.")
+        .font(.caption).foregroundStyle(Color.assetSecondary)
+      Button("Stop tracking and keep saved balances") { store.perform("bitcoin.disconnect", ["id": account.id]) }
+        .frame(minHeight: 44)
+    }
   }
 }
 struct InvestmentsView: View {
@@ -527,11 +584,11 @@ struct HoldingDetail: View {
         LabeledContent("Market value", value: money(h.data["marketValue"], h.text("currency")))
         LabeledContent("Cost basis", value: money(h.data["costBasis"], h.text("currency")))
         LabeledContent("Unrealized gain", value: money(h.data["gain"], h.text("currency")))
-        Text("Position gain is not your cash-flow-adjusted portfolio return. Prices are not live.")
+        Text(h.text("source") == "bitcoin" ? "Bitcoin quotes refresh every minute while Asset is open. Address details and historical prices are in Accounts." : "Position gain is not your cash-flow-adjusted portfolio return. Prices are not live.")
           .font(.custom("Lato-Regular", size: 13, relativeTo: .caption)).foregroundStyle(
             Color.assetSecondary)
       }
-      if h.text("source") != "plaid" { Button("Edit holding") { edit = true } }
+      if !["plaid", "bitcoin"].contains(h.text("source")) { Button("Edit holding") { edit = true } }
     }.assetTitle(h.text("symbol")).sheet(isPresented: $edit) { HoldingForm(holding: h) }
   }
 }

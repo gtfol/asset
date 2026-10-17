@@ -32,7 +32,17 @@ export const accountSchema = z.object({
   balance: centsSchema.nullable(),
   includeInNetWorth: z.boolean().default(true),
   enabled: z.boolean().default(true),
-  source: z.enum(['demo', 'manual', 'csv', 'plaid']),
+  source: z.enum(['demo', 'manual', 'csv', 'plaid', 'bitcoin']),
+  bitcoin: z
+    .object({
+      address: z.string().min(14).max(90),
+      satoshis: z.number().int().safe().nonnegative(),
+      pendingSatoshis: z.number().int().safe(),
+      syncedAt: z.string().datetime(),
+      historyStart: dateSchema,
+      historyComplete: z.boolean(),
+    })
+    .optional(),
   updatedAt: z.string(),
   mask: z.string().optional(),
   connectionId: z.string().optional(),
@@ -90,7 +100,7 @@ export const snapshotSchema = z.object({
   date: dateSchema,
   balance: centsSchema,
   currency: z.string().length(3),
-  source: z.enum(['demo', 'manual', 'csv', 'plaid']),
+  source: z.enum(['demo', 'manual', 'csv', 'plaid', 'bitcoin']),
 });
 export const holdingSchema = z.object({
   id: z.string(),
@@ -105,7 +115,12 @@ export const holdingSchema = z.object({
   priceAt: z.string().nullable(),
   type: z.string(),
   providerId: z.string().optional(),
-  source: z.enum(['demo', 'manual', 'csv', 'plaid']),
+  source: z.enum(['demo', 'manual', 'csv', 'plaid', 'bitcoin']),
+});
+export const bitcoinMarketSchema = z.object({
+  price: centsSchema.positive(),
+  updatedAt: z.string().datetime(),
+  history: z.array(z.object({ date: dateSchema, price: centsSchema.positive() })).max(10000),
 });
 export const ruleSchema = z.object({
   id: z.string(),
@@ -142,6 +157,7 @@ export const stateSchema = z.object({
   holdingSnapshots: z.array(holdingSnapshotSchema).default([]),
   rules: z.array(ruleSchema),
   investmentActivity: z.array(investmentActivitySchema),
+  bitcoinMarket: bitcoinMarketSchema.optional(),
   settings: z.object({
     currency: z.string().length(3),
     includeExcludedCashflow: z.boolean(),
@@ -179,6 +195,14 @@ export function validateState(value: unknown): State {
   }
   const ids = new Set(s.accounts.map((a) => a.id));
   const cats = new Set(s.categories.map((c) => c.id));
+  const wallets = s.accounts.filter((a) => a.source === 'bitcoin');
+  if (wallets.length > 20) throw Error('Track up to 20 Bitcoin addresses per workspace');
+  if (wallets.some((a) => !a.bitcoin || a.type !== 'investment' || a.currency !== 'USD'))
+    throw Error('Bitcoin accounts require a public address and USD investment valuation');
+  if (new Set(wallets.map((a) => a.bitcoin!.address)).size !== wallets.length)
+    throw Error('This Bitcoin address is already tracked');
+  if (s.accounts.some((a) => a.source !== 'bitcoin' && a.bitcoin))
+    throw Error('Only Bitcoin accounts can contain wallet tracking data');
   for (const list of [
     s.accounts,
     s.categories,

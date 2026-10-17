@@ -183,14 +183,17 @@ export function LineChart({
     range = max - min;
   const x = (i: number) => pad + (i * (w - 2 * pad)) / Math.max(1, points.length - 1),
     y = (v: number) => h - pad - ((v - min) / range) * (h - 2 * pad);
-  const path = (field: 'value' | 'ideal') =>
-    points
-      .map((p, i) =>
-        p[field] === null || p[field] === undefined
-          ? ''
-          : `${points.slice(0, i).some((q) => q[field] !== null && q[field] !== undefined) ? 'L' : 'M'}${x(i)},${y(p[field]!)}`,
-      )
+  const path = (field: 'value' | 'ideal') => {
+    let started = false;
+    return points
+      .map((p, i) => {
+        if (p[field] === null || p[field] === undefined) return '';
+        const segment = `${started ? 'L' : 'M'}${x(i)},${y(p[field]!)}`;
+        started = true;
+        return segment;
+      })
       .join(' ');
+  };
   const lastIndex = points.reduce((index, p, i) => (p.value !== null ? i : index), -1);
   const selected = active === null ? null : points[active];
   return (
