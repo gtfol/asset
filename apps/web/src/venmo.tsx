@@ -71,7 +71,7 @@ export function VenmoConnection({
     setError('');
     setNotice('');
     try {
-      if (path) await api('/venmo' + path, body, 'POST', session);
+      if (path) await api('/venmo' + (path === '/' ? '' : path), body, 'POST', session);
       if (!active()) return;
       const next = await api('/venmo', undefined, 'GET', session);
       if (!active()) return;

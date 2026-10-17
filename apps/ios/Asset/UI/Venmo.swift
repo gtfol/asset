@@ -115,7 +115,7 @@ struct VenmoConnectionView: View {
     Task { @MainActor in
       defer { if current() { busy = false } }
       do {
-        if let path { _ = try await store.request("/venmo" + path, body: body, server: server, token: token) }
+        if let path { _ = try await store.request("/venmo" + (path == "/" ? "" : path), body: body, server: server, token: token) }
         guard current() else { return }
         let result = try await store.request("/venmo", server: server, token: token)
         guard current() else { return }
