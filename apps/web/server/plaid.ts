@@ -36,7 +36,7 @@ function syncErrorCode(error: unknown): string {
     code,
     errorType: e?.name,
     storageCode: code === 'SYNC_STORAGE_FAILED' ? e.code : undefined,
-    fields: e?.issues?.slice(0, 8).map(({ path, code }) => ({ path, code })),
+    fields: e?.issues?.slice(0, 8).map(({ path, code }) => ({ path: path.join('.'), code })),
   });
   return code;
 }
@@ -377,7 +377,9 @@ export function applyProviderRecords(
     const normalized: Transaction = {
       id: previous?.id ?? pending?.id ?? randomUUID(),
       accountId: account.id,
-      name: raw.merchant_name ?? raw.name ?? 'Imported transaction',
+      // Provider descriptions can exceed the editable display-name limit. The full
+      // original description remains in raw for provenance and reconciliation.
+      name: String(raw.merchant_name || raw.name || 'Imported transaction').slice(0, 160),
       date: raw.date,
       amount: Math.abs(minor(raw.amount) ?? 0),
       currency: raw.iso_currency_code ?? account.currency,
@@ -603,7 +605,7 @@ async function commitSync(
         if (!a && !selected) continue;
         const value: Account = {
           id: a?.id ?? randomUUID(),
-          name: a?.name ?? raw.name,
+          name: a?.name ?? String(raw.name || 'Connected account').slice(0, 100),
           type: typeMap(raw),
           currency: raw.balances.iso_currency_code ?? 'USD',
           balance: minor(raw.balances.current),

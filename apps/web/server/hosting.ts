@@ -1,8 +1,10 @@
 import type { IncomingHttpHeaders } from 'node:http';
 import type { RequestHandler } from 'express';
+import { gzipSync } from 'node:zlib';
 
 const canonicalOrigin = 'https://asset.gtfol.dev';
 export const HOSTED_PAYLOAD_BYTES = 4_000_000;
+export const HOSTED_WORKSPACE_BYTES = 32_000_000;
 
 export function jsonBodyLimit(): number {
   return process.env.VERCEL === '1' ? HOSTED_PAYLOAD_BYTES : 12 * 1024 * 1024;
@@ -12,7 +14,10 @@ const payloadMessage =
   'This data exceeds the hosted size limit. Use a smaller import or a self-hosted server.';
 
 export function assertHostedPayloadSize(value: unknown): void {
-  if (process.env.VERCEL === '1' && Buffer.byteLength(JSON.stringify(value)) > HOSTED_PAYLOAD_BYTES)
+  if (process.env.VERCEL !== '1') return;
+  const body = Buffer.from(JSON.stringify(value));
+  if (body.length > HOSTED_WORKSPACE_BYTES ||
+    (body.length > HOSTED_PAYLOAD_BYTES && gzipSync(body, { level: 1 }).length > HOSTED_PAYLOAD_BYTES - 64_000))
     throw Object.assign(Error(payloadMessage), { status: 413 });
 }
 
@@ -22,6 +27,18 @@ export const hostedPayloadGuard: RequestHandler = (req, res, next) => {
   res.send = function (body: unknown) {
     const size =
       typeof body === 'string' ? Buffer.byteLength(body) : Buffer.isBuffer(body) ? body.length : 0;
+    // Compress at the function boundary, before Vercel applies its response limit.
+    // Browsers and URLSession decode Content-Encoding automatically.
+    if (size > 256_000 && size <= HOSTED_WORKSPACE_BYTES &&
+      String(this.getHeader('content-type')).includes('application/json') &&
+      !this.getHeader('content-encoding') && req.acceptsEncodings('gzip')) {
+      const compressed = gzipSync(body as string | Buffer, { level: 1 });
+      if (compressed.length <= HOSTED_PAYLOAD_BYTES) {
+        this.setHeader('Content-Encoding', 'gzip');
+        this.vary('Accept-Encoding');
+        return send.call(this, compressed);
+      }
+    }
     if (size > HOSTED_PAYLOAD_BYTES) {
       this.status(413).type('application/json');
       this.removeHeader('Content-Disposition');

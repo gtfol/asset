@@ -75,6 +75,16 @@ beforeAll(() => {
 });
 afterAll(() => vi.unstubAllEnvs());
 describe('provider reconciliation', () => {
+  it('accepts long bank descriptions while retaining the full original', () => {
+    const s = fixture();
+    s.accounts[0].connectionId = c.id;
+    s.accounts[0].providerId = 'provider-a';
+    const description = 'Detailed bank transfer description '.repeat(10);
+    applyProviderRecords(s, c, { added: [raw('long-name', { name: description })], modified: [], removed: [] });
+    const t = s.transactions.find(t => t.providerId === 'long-name')!;
+    expect(t.name).toHaveLength(160);
+    expect(t.raw?.name).toBe(description);
+  });
   it('encrypts authenticated tokens, rejects tampering', () => {
     const cipher = encryptToken('test-access-token');
     expect(cipher).not.toContain('test-access');

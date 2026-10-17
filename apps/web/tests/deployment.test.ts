@@ -3,7 +3,7 @@ import express from 'express';
 import pg from 'pg';
 import { createServer, type Server } from 'node:http';
 import { once } from 'node:events';
-import { X509Certificate } from 'node:crypto';
+import { X509Certificate, randomBytes } from 'node:crypto';
 import { checkServerIdentity, type ConnectionOptions, type PeerCertificate } from 'node:tls';
 import { createServerlessApp } from '../api/index';
 import {
@@ -119,17 +119,34 @@ describe('hosted request adapter', () => {
     expect(request.status).toBe(413);
     expect((await request.json()).error).toContain('hosted size limit');
     expect(initialize).not.toHaveBeenCalled();
-    const response = await fetch(`${base}/api/backup`);
+    const response = await fetch(`${base}/api/backup`, { headers: { 'accept-encoding': 'identity' } });
     expect(response.status).toBe(413);
     expect(response.headers.get('content-disposition')).toBeNull();
     expect((await response.json()).error).toContain('hosted size limit');
     expect(jsonBodyLimit()).toBe(HOSTED_PAYLOAD_BYTES);
-    expect(() => assertHostedPayloadSize({ data: 'x'.repeat(HOSTED_PAYLOAD_BYTES) })).toThrow(
+    expect(() => assertHostedPayloadSize({ data: randomBytes(HOSTED_PAYLOAD_BYTES + 100_000).toString('base64') })).toThrow(
       'hosted size limit',
     );
     vi.stubEnv('VERCEL', undefined);
     expect(jsonBodyLimit()).toBe(12 * 1024 * 1024);
     expect(() => assertHostedPayloadSize({ data: 'x'.repeat(HOSTED_PAYLOAD_BYTES) })).not.toThrow();
+  });
+  it('delivers large financial workspaces as bounded gzip responses without truncation', async () => {
+    vi.stubEnv('VERCEL', '1');
+    const state = { transactions: Array.from({ length: 12_000 }, (_, i) => ({
+      id: `transaction-${i}`, accountId: 'checking', name: 'A detailed bank transaction',
+      amount: i, date: '2026-10-17', notes: 'Historical activity '.repeat(16),
+    })) };
+    expect(Buffer.byteLength(JSON.stringify(state))).toBeGreaterThan(HOSTED_PAYLOAD_BYTES);
+    expect(() => assertHostedPayloadSize(state)).not.toThrow();
+    const ready = express();
+    ready.get('/api/state', (_req, res) => res.json(state));
+    const base = await listen(createServerlessApp(async () => ready));
+    const response = await fetch(`${base}/api/state`);
+    expect(response.status).toBe(200);
+    expect(response.headers.get('content-encoding')).toBe('gzip');
+    expect(Number(response.headers.get('content-length'))).toBeLessThan(HOSTED_PAYLOAD_BYTES);
+    expect(await response.json()).toEqual(state);
   });
 });
 
