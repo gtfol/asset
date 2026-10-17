@@ -9,6 +9,7 @@ import {
 import { decodeProtectedHeader, importJWK, jwtVerify, type JWK } from 'jose';
 import { mutateState, type Database, type SQL } from './db.js';
 import { acceptedOrigins } from './hosting.js';
+import { venmoBankTransfer } from '../shared/venmo.js';
 import {
   applyRules,
   fingerprint,
@@ -440,7 +441,7 @@ export function applyProviderRecords(
     }
     if (pending && previous && pending.id !== previous.id) pending.removed = true;
     const index = s.transactions.findIndex((t) => t.id === normalized.id);
-    const ready = applyRules(normalized, s);
+    const ready = venmoBankTransfer(applyRules(normalized, s), s);
     if (index < 0) s.transactions.push(ready);
     else s.transactions[index] = ready;
   }

@@ -11,7 +11,7 @@ Preferences and the most recent 200 alerts sync with the workspace. Big expenses
 - Recurring payments follow explicitly labeled transactions, including Copilot recurring labels. Future payments match a labeled merchant on the same account. These labels can be edited in transaction detail; recurrence is not inferred from arbitrary repeated purchases.
 - Credit utilization requires a known balance and positive credit limit. An alert occurs when an existing card moves from below to at or above the configured threshold, at most once per card per day. Plaid-reported limits are preserved. Manual card limits can be entered in account settings.
 - A daily spending summary is eligible after 7 pm in the workspace time zone. It uses posted spending less refunds, excluding budget-excluded spending. Incomplete coverage is labeled. The worker does not replay summaries from previous days.
-- Venmo alerts match new activity on a Venmo account or a transaction explicitly identifying Venmo. This does not establish a live Venmo connection by itself.
+- Venmo alerts match new activity on a Venmo account or a transaction explicitly identifying Venmo. Authenticated Venmo receipt imports also generate these alerts. Historical/manual receipt confirmation stays quiet; receiving must be configured separately.
 
 ## Delivery
 

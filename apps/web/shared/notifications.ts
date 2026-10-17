@@ -123,7 +123,8 @@ export function updateNotifications(
         add('recurringPaid', description);
       if (t.kind === 'transfer' && t.categoryId === 'other' && !t.reviewed && !t.excluded)
         add('uncategorizedTransfer', `${description}. Review this transfer.`);
-      if (/\bvenmo\b/i.test(account.name + ' ' + t.name)) add('venmo', description);
+      if (t.source === 'venmo' || /\bvenmo\b/i.test(account.name + ' ' + t.name))
+        add('venmo', description);
     }
     for (const account of next.accounts) {
       const old = oldAccounts.get(account.id);

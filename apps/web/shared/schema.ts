@@ -34,7 +34,8 @@ export const accountSchema = z.object({
   creditLimit: centsSchema.positive().nullable().optional(),
   includeInNetWorth: z.boolean().default(true),
   enabled: z.boolean().default(true),
-  source: z.enum(['demo', 'manual', 'csv', 'plaid', 'bitcoin']),
+  source: z.enum(['demo', 'manual', 'csv', 'plaid', 'bitcoin', 'venmo']),
+  venmo: z.object({ bankTransfers: z.boolean().default(true) }).optional(),
   bitcoin: z
     .object({
       address: z.string().min(14).max(90),
@@ -82,7 +83,7 @@ export const transactionSchema = z.object({
   reviewed: z.boolean().default(false),
   pending: z.boolean().default(false),
   removed: z.boolean().default(false),
-  source: z.enum(['demo', 'manual', 'csv', 'plaid']),
+  source: z.enum(['demo', 'manual', 'csv', 'plaid', 'venmo']),
   importedAt: z.string(),
   providerId: z.string().optional(),
   pendingProviderId: z.string().nullable().optional(),
@@ -106,7 +107,7 @@ export const snapshotSchema = z.object({
   date: dateSchema,
   balance: centsSchema,
   currency: z.string().length(3),
-  source: z.enum(['demo', 'manual', 'csv', 'plaid', 'bitcoin']),
+  source: z.enum(['demo', 'manual', 'csv', 'plaid', 'bitcoin', 'venmo']),
 });
 export const holdingSchema = z.object({
   id: z.string(),

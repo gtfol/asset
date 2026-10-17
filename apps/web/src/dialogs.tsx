@@ -533,7 +533,7 @@ export function AccountEditor({
 }) {
   const a = state.accounts.find((a) => a.id === id),
     [error, setError] = useState('');
-  const connected = a?.source === 'plaid' || a?.source === 'bitcoin';
+  const connected = a?.source === 'plaid' || a?.source === 'bitcoin' || a?.source === 'venmo';
   return (
     <Modal title={a ? 'Edit account' : 'Add manual account'} onClose={onClose}>
       <form

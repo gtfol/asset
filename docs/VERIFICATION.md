@@ -161,3 +161,9 @@ Current iPad screenshots: portrait [Dashboard](screenshots/ipad-dashboard.png), 
 - Cash Flow is calendar Month/Year only. Unsupported portfolio return and missing pre-link valuation history are explicitly unavailable. Bitcoin has periodically refreshed quotes; other holdings have no live quote feed. No trading, AI, goals, recurring management, or subscription tracker.
 - Local manual/CSV/demo use needs no Supabase or Vercel project. Bank sync needs protected per-user Plaid credentials and an approved HTTPS backend/webhook; shared phone/web use needs the same authenticated server. The durable Plaid queue is processed by an authenticated Vercel Cron function with persisted checkpoints; user credentials are supplied in Connections.
 - Plaid Production, native OAuth, physical-device signing, and Docker runtime remain unverified. See [PLAID.md](PLAID.md). The web app is publicly deployed with verified Google sign-in and Supabase demo persistence; no TestFlight build has been uploaded. The project license remains proposed for owner review.
+
+## Venmo forwarding — October 17, 2026
+
+Added signed Resend receiving, authenticated sender checks, per-account routes, encrypted temporary previews, imported-history matching, manual review, pause/address rotation and web/native setup. The full web suite passed 156 tests; the added address-rotation race check brings the Venmo suite to 14 passing tests. Production web build, native resource freshness, calculation parity, 101 native checks and unsigned simulator build passed. Synthetic web setup was visually checked at desktop and 390px phone width.
+
+External receiving setup and an actual Venmo receipt remain unverified until the gtfol Resend account is accessible and configured. No real forwarded email, automatic balance sync, or TestFlight delivery is claimed.

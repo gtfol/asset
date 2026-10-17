@@ -279,7 +279,7 @@ struct AccountForm: View {
   @State var end = ""
   @State var complete = false
   @State var loaded = false
-  var connected: Bool { ["plaid", "bitcoin"].contains(account?.text("source") ?? "") }
+  var connected: Bool { ["plaid", "bitcoin", "venmo"].contains(account?.text("source") ?? "") }
   var body: some View {
     FormShell(
       title: account == nil ? "Add manual account" : "Edit account",

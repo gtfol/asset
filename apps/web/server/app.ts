@@ -5,6 +5,12 @@ import { applyCommand, backup, validateState, type Command } from '../shared/cor
 import { createDemo } from '../shared/demo.js';
 import { getState, mutateState, type Database } from './db.js';
 import { authenticated, newSession, readToken, tokenHash } from './auth.js';
+import {
+  venmoRoutes,
+  venmoWebhook,
+  purgeVenmoReviewContent,
+  type ReceivingProvider,
+} from './venmo.js';
 import { bitcoinRoutes, type BitcoinProvider } from './bitcoin.js';
 import { notificationRoutes, notificationWorker } from './notifications.js';
 import {
@@ -40,6 +46,7 @@ export function createApp(
   provider?: PlaidProvider,
   google: GoogleProvider = new GoogleOAuth(),
   bitcoin?: BitcoinProvider,
+  receiving?: ReceivingProvider,
 ) {
   const resolveProvider = async (owner: string) => provider ?? userPlaidProvider(db, owner);
   const requestProvider = async (owner: string) =>
@@ -70,6 +77,7 @@ export function createApp(
     }
     const deadline = Date.now() + 45000;
     let processed = 0;
+    await purgeVenmoReviewContent(db);
     await enqueueStaleSyncs(db);
     while (
       Date.now() < deadline - 3000 &&
@@ -123,6 +131,7 @@ export function createApp(
       res.status(202).json({ accepted: true });
     },
   );
+  app.use('/api/venmo/webhook', venmoWebhook(db, receiving));
   app.use('/api', express.json({ limit: jsonBodyLimit() }));
   app.use('/api', (req, res, next) => {
     if (req.method === 'GET') {
@@ -179,7 +188,7 @@ export function createApp(
   });
   app.use('/api', authenticated(db));
   app.use('/api/notifications', notificationRoutes(db));
-  app.use('/api/bitcoin', (req, res, next) => {
+  app.use(['/api/bitcoin', '/api/venmo'], (req, res, next) => {
     const expected = req.header('x-asset-session');
     if (
       expected !== undefined &&
@@ -187,12 +196,13 @@ export function createApp(
     ) {
       res
         .status(409)
-        .json({ error: 'Your sign-in changed. Reload Asset before managing Bitcoin addresses.' });
+        .json({ error: 'Your sign-in changed. Reload Asset before managing connections.' });
       return;
     }
     next();
   });
   app.use('/api/bitcoin', bitcoinRoutes(db, bitcoin));
+  app.use('/api/venmo', venmoRoutes(db));
   app.post('/api/auth/logout', async (req, res) => {
     await db.query('DELETE FROM sessions WHERE token_hash=$1', [tokenHash(readToken(req) ?? '')]);
     res.clearCookie('asset_session', { path: '/' });
@@ -223,9 +233,14 @@ export function createApp(
         async (s, tx) => {
           if (
             c.type === 'backup.restore' &&
-            (await listConnections(tx, res.locals.owner)).some(
+            ((await listConnections(tx, res.locals.owner)).some(
               (c: any) => c.status !== 'disconnected',
-            )
+            ) ||
+              (
+                await tx.query('SELECT id FROM venmo_routes WHERE owner_id=$1 AND active=true', [
+                  res.locals.owner,
+                ])
+              ).rows.length > 0)
           )
             throw Error('Disconnect active connections before restoring a backup');
           return applyCommand(s, c as Command);

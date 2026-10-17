@@ -29,7 +29,7 @@ The native app keeps bundle ID `org.gtfol.asset`. Signing, App Store Connect, an
 
 [Feature checklist and verified screenshots](docs/VERIFICATION.md) · [Design](docs/DESIGN.md) · [Research](docs/RESEARCH.md) · [Calculations and backups](docs/FINANCE.md)
 
-Signed-in workspaces can track Bitcoin public addresses with current USD valuations and historical daily values, including available prices back to 2015. See [Bitcoin tracking](docs/BITCOIN.md) for coverage, privacy, and refresh limits, and [account connections](docs/ACCOUNT-CONNECTIONS.md) for the Venmo and Apple milestone.
+Signed-in workspaces can track Bitcoin public addresses with current USD valuations and historical daily values, including available prices back to 2015. See [Bitcoin tracking](docs/BITCOIN.md) for coverage, privacy, and refresh limits, and [account connections](docs/ACCOUNT-CONNECTIONS.md) for connection coverage. [Venmo forwarding](docs/VENMO.md) can attach receipts to an existing imported account; server receiving setup is required.
 
 Manual accounts, CSV, and synthetic demo data work without Plaid credentials. The normal connection flow uses each user’s Plaid Production credentials. Sandbox remains available for development; live bank linking remains unverified. No goals, recurring-bill management, subscription tracker, AI chat, or model service are included.
 

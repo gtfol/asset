@@ -10,6 +10,8 @@ Reviewed installed metadata and lockfiles on October 15–16, 2026. Direct JavaS
 | pg | 8.23.1 | MIT; optional hosted PostgreSQL |
 | jose | 6.2.12 | MIT; Google ID-token and signed webhook verification |
 | @vercel/functions | 3.10.1 | Apache-2.0; hosted database pool lifecycle |
+| Svix | 2.8.0 | MIT; inbound webhook signature and timestamp verification |
+| html-to-text | 10.0.1 | MIT; bounded plain-text receipt extraction |
 | Papa Parse | 5.7.0 | MIT; CSV parser |
 | Zod | 4.6.7 | MIT; shared schema validation |
 | Lucide React | 1.57.0 | ISC; icons |

@@ -529,11 +529,11 @@ function applyFinancialCommand(input: State, command: Command): State {
     case 'account.save': {
       const a = accountSchema.parse(p);
       const existing = s.accounts.find((x) => x.id === a.id);
-      if (existing?.source === 'plaid' || existing?.source === 'bitcoin') {
+      if (existing && ['plaid', 'bitcoin', 'venmo'].includes(existing.source)) {
         existing.includeInNetWorth = a.includeInNetWorth;
         existing.name = a.name;
       } else {
-        if (a.source === 'plaid' || a.source === 'bitcoin')
+        if (['plaid', 'bitcoin', 'venmo'].includes(a.source))
           throw Error('Use the connection flow to create tracked accounts');
         s.accounts = s.accounts.filter((x) => x.id !== a.id);
         s.accounts.push(a);
@@ -630,11 +630,19 @@ function applyFinancialCommand(input: State, command: Command): State {
       break;
     }
     case 'import.link-accounts': {
-      const links = z.array(z.object({ importedId: z.string(), connectedId: z.string() })).min(1).max(100).parse(p.links);
-      if (new Set(links.map(l => l.importedId)).size !== links.length || new Set(links.map(l => l.connectedId)).size !== links.length)
+      const links = z
+        .array(z.object({ importedId: z.string(), connectedId: z.string() }))
+        .min(1)
+        .max(100)
+        .parse(p.links);
+      if (
+        new Set(links.map((l) => l.importedId)).size !== links.length ||
+        new Set(links.map((l) => l.connectedId)).size !== links.length
+      )
         throw Error('Choose each account only once');
       let linked = s;
-      for (const link of links) linked = linkImportedAccount(linked, link.importedId, link.connectedId);
+      for (const link of links)
+        linked = linkImportedAccount(linked, link.importedId, link.connectedId);
       return validateState(linked);
     }
     case 'import.commit': {
@@ -664,7 +672,7 @@ function applyFinancialCommand(input: State, command: Command): State {
     }
     case 'backup.restore': {
       const restored = validateState(p.state);
-      if (restored.accounts.some((a) => a.source === 'plaid'))
+      if (restored.accounts.some((a) => ['plaid', 'venmo'].includes(a.source)))
         throw Error('Restore backups with disconnected account provenance');
       if (restored.settings.demo !== s.settings.demo)
         throw Error('Demo and private data cannot be mixed');
@@ -687,12 +695,12 @@ export function backup(s: State) {
       ...s,
       accounts: s.accounts.map(({ connectionId, providerId, ...a }) => ({
         ...a,
-        source: a.source === 'plaid' ? 'manual' : a.source,
+        source: ['plaid', 'venmo'].includes(a.source) ? 'manual' : a.source,
       })),
       transactions: s.transactions.map(
         ({ raw, connectionId, providerId, pendingProviderId, ...t }) => ({
           ...t,
-          source: t.source === 'plaid' ? 'manual' : t.source,
+          source: ['plaid', 'venmo'].includes(t.source) ? 'manual' : t.source,
         }),
       ),
       holdingSnapshots: s.holdingSnapshots.map(({ providerId, ...h }) => ({

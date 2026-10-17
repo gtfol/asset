@@ -23,6 +23,7 @@
 		A9DDC2C480FD0B8A6CD477C66609D1FC /* LinkKit in Frameworks */ = {isa = PBXBuildFile; productRef = 999A525A6E732938F7B99433246E5A9B /* LinkKit */; };
 		B33CBB24B778E086CC651ED10865A1A0 /* AssetApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3BA3641F936225E3938A5CFF0910500D /* AssetApp.swift */; };
 		FA747726B20DD59A4E9A387E5EBFC727 /* Lato-Regular.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 4AEB3512FFF31DCC6B0755AD29C1E32B /* Lato-Regular.ttf */; };
+		71BA8F86BE184583B4B2BEA1 /* Venmo.swift in Sources */ = {isa = PBXBuildFile; fileRef = 767DA07655C34CA59B66B21E /* Venmo.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -43,6 +44,7 @@
 		CD53556AB78B91CCAF5BCED2A007E88E /* Components.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = Components.swift; sourceTree = "<group>"; };
 		D0EE8D9F7CFFCDE600B7FEF5FD24A8B9 /* third-party-notices.txt */ = {isa = PBXFileReference; includeInIndex = 1; path = "third-party-notices.txt"; sourceTree = "<group>"; };
 		E373DB8332C5274FCABD816140CC94C4 /* Screens.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = Screens.swift; sourceTree = "<group>"; };
+		767DA07655C34CA59B66B21E /* Venmo.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Venmo.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -75,6 +77,7 @@
 				4BBE5690C32AC3DB2E3292D803102166 /* RootView.swift */,
 				E373DB8332C5274FCABD816140CC94C4 /* Screens.swift */,
 				A96929EDC33AF470C135EB1AD683B643 /* Settings.swift */,
+				767DA07655C34CA59B66B21E /* Venmo.swift */,
 			);
 			name = UI;
 			path = UI;
@@ -222,6 +225,7 @@
 				5998C1701086F6090C70056C59C64F92 /* RootView.swift in Sources */,
 				97261FA6FE07A6F707FA38160026B05B /* Screens.swift in Sources */,
 				3F7A60882081A407DFFB95214CB3839B /* Settings.swift in Sources */,
+				71BA8F86BE184583B4B2BEA1 /* Venmo.swift in Sources */,
 				3D1D5A31E1E4DA5763EA6215BF91D99D /* Store.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

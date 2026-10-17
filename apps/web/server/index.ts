@@ -5,6 +5,7 @@ import { openDatabase } from './db.js';
 import { createApp } from './app.js';
 import { enqueueStaleSyncs, processJob } from './plaid.js';
 import { userPlaidProvider } from './plaid-credentials.js';
+import { purgeVenmoReviewContent } from './venmo.js';
 import { notificationWorker } from './notifications.js';
 const root = fileURLToPath(new URL('..', import.meta.url));
 const db = await openDatabase(),
@@ -24,6 +25,7 @@ const interval = setInterval(async () => {
   processing = true;
   try {
     if (Date.now() - lastSweep >= 60000) {
+      await purgeVenmoReviewContent(db);
       await enqueueStaleSyncs(db);
       await notificationWorker(db, Date.now() + 15000);
       lastSweep = Date.now();

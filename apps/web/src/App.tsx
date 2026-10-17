@@ -1598,9 +1598,11 @@ function Accounts({
                                 ? 'Manual account'
                                 : a.source === 'csv'
                                   ? 'CSV import'
-                                  : a.source === 'bitcoin'
-                                    ? 'Bitcoin address'
-                                    : 'Plaid cached balance'}{' '}
+                                  : a.source === 'venmo'
+                                    ? 'Venmo receipts · balance not synced'
+                                    : a.source === 'bitcoin'
+                                      ? 'Bitcoin address'
+                                      : 'Plaid cached balance'}{' '}
                             · {a.mask ?? a.currency}
                             {!a.enabled ? ' · Sync account disabled' : ''}
                           </small>

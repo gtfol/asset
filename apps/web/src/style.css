@@ -2474,11 +2474,22 @@ dialog label {
   border-radius: 50%;
   background: var(--canvas);
 }
-.notification-setting input[type='checkbox']:checked { background: var(--text); }
-.notification-setting input[type='checkbox']:checked::before { transform: translateX(14px); }
-.notification-setting + .form-grid { margin-top: 24px; }
-.import-preview td small { display: block; margin-top: 4px; }
-.import-preview > h3 { margin: 20px 0 12px; }
+.notification-setting input[type='checkbox']:checked {
+  background: var(--text);
+}
+.notification-setting input[type='checkbox']:checked::before {
+  transform: translateX(14px);
+}
+.notification-setting + .form-grid {
+  margin-top: 24px;
+}
+.import-preview td small {
+  display: block;
+  margin-top: 4px;
+}
+.import-preview > h3 {
+  margin: 20px 0 12px;
+}
 .notification-list {
   display: grid;
 }
@@ -2496,4 +2507,27 @@ dialog label {
   border-radius: 50%;
   background: currentColor;
   margin-left: 6px;
+}
+
+.venmo-route,
+.venmo-review {
+  border-top: 1px solid var(--border);
+  padding: 1rem 0;
+}
+.venmo-steps {
+  padding-left: 1.4rem;
+  line-height: 1.6;
+}
+.venmo-preview {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 16rem;
+  overflow: auto;
+  font: inherit;
+  font-size: 0.875rem;
+  padding: 1rem;
+  background: var(--hover);
+}
+.venmo-route input[readonly] {
+  font-size: 0.8rem;
 }

@@ -7,6 +7,7 @@ import {
   type PlaidLinkError,
 } from 'react-plaid-link';
 import { api, type Run } from './App';
+import { VenmoConnection } from './venmo';
 import { AccountLinks } from './account-links';
 import { Modal, Status } from './components';
 import { money, type State } from '../shared/core';
@@ -476,6 +477,7 @@ export function ConnectionsDialog({
           {busy}
         </p>
       )}
+      <VenmoConnection state={state} sessionId={sessionId} load={load} />
       <AccountLinks state={state} run={run} disabled={locked} />
       {connections.map((c) => (
         <section className="connection-card" key={c.id}>
@@ -497,12 +499,19 @@ export function ConnectionsDialog({
             {c.last_synced_at ? new Date(c.last_synced_at).toLocaleString() : 'not yet'} ·{' '}
             {c.historical_complete ? 'Initial history finished' : 'History may still be loading'}
           </p>
-          {c.error_code && <p className="negative">{({
-            WORKSPACE_SIZE_LIMIT: 'This history exceeds the current workspace size limit.',
-            SYNC_DATA_INVALID: 'A bank record could not be imported. Your saved history is unchanged.',
-            SYNC_STORAGE_FAILED: 'The bank update could not be saved. Please try again.',
-            SYNC_FAILED: 'The sync could not finish. Please try again.',
-          } as Record<string, string>)[c.error_code] ?? c.error_code}</p>}
+          {c.error_code && (
+            <p className="negative">
+              {(
+                {
+                  WORKSPACE_SIZE_LIMIT: 'This history exceeds the current workspace size limit.',
+                  SYNC_DATA_INVALID:
+                    'A bank record could not be imported. Your saved history is unchanged.',
+                  SYNC_STORAGE_FAILED: 'The bank update could not be saved. Please try again.',
+                  SYNC_FAILED: 'The sync could not finish. Please try again.',
+                } as Record<string, string>
+              )[c.error_code] ?? c.error_code}
+            </p>
+          )}
           {state.accounts
             .filter((a) => a.connectionId === c.id)
             .map((a) => (
