@@ -131,6 +131,9 @@ describe('notification storage and delivery', () => {
       settings: { ...state.settings, timezone: 'UTC' },
     }));
     expect((await db.query('SELECT * FROM notification_deliveries')).rows).toHaveLength(1);
+    await notificationWorker(db, Date.now() + 15000, async () => 400);
+    expect((await db.query('SELECT * FROM notification_devices')).rows).toHaveLength(1);
+    await db.query("UPDATE notification_deliveries SET available_at=now() WHERE status='pending'");
     let sent = 0;
     await notificationWorker(db, Date.now() + 15000, async () => {
       sent++;

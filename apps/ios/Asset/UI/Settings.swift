@@ -419,14 +419,20 @@ struct CopilotImportSections: View {
         } catch { store.error = error.localizedDescription }
       }.disabled(complete)
       if let p = preview {
-        Text("\(p.rows("transactions").count) ready · \(p.integer("duplicates")) already imported")
+        Text(
+          "\(p.rows("transactions").count) ready · \(p.rows("updated").count) updated · \(p.integer("duplicates")) already imported"
+        )
         Text(
           "\(p.rows("accounts").count) new accounts · \(p.integer("pending")) pending transactions")
         ForEach(Array(p.rows("errors").enumerated()), id: \.offset) { _, error in
           Text("Row \(error.integer("row")): \(error.text("message"))").foregroundStyle(
             Color.assetError)
         }
-        Button(complete ? "Import complete" : "Import \(p.rows("transactions").count) transactions")
+        Button(
+          complete
+            ? "Import complete"
+            : "Import \(p.rows("transactions").count + p.rows("updated").count) transactions"
+        )
         {
           Task {
             do {
@@ -435,7 +441,9 @@ struct CopilotImportSections: View {
             } catch { store.error = error.localizedDescription }
           }
         }.disabled(
-          complete || store.busy || p.rows("transactions").isEmpty || !p.rows("errors").isEmpty)
+          complete || store.busy
+            || (p.rows("transactions").isEmpty && p.rows("updated").isEmpty)
+            || !p.rows("errors").isEmpty)
       }
     }.onAppear {
       currency = store.currency

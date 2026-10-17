@@ -171,7 +171,9 @@ export async function notificationWorker(db: Database, deadline: number, sender?
     }
     try {
       const status = await sender(job.token, job.environment, job.notification_id);
-      if (status === 410 || status === 400)
+      // Only APNs' unregistered response proves this device should be removed.
+      // A bad request can instead indicate a provider or payload configuration error.
+      if (status === 410)
         await db.query('DELETE FROM notification_devices WHERE id=$1', [job.device_id]);
       else if (status === 200) {
         await db.query("UPDATE notification_deliveries SET status='sent' WHERE id=$1", [job.id]);
