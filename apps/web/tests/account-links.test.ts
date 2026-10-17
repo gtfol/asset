@@ -49,6 +49,20 @@ describe('linking imported accounts', () => {
     expect(() => applyCommand(s, { ...link, payload: { links: [{ importedId: 'a', connectedId: 'another-owner' }] } })).toThrow('connected bank');
     expect(s.accounts).toHaveLength(2);
   });
+  it('preserves transfer classifications and authorized dates without combining opposite purchases and refunds', () => {
+    const s = accounts();
+    s.transactions = [
+      transaction('payment', 1000, { source: 'csv', name: 'Payment Thank You', kind: 'transfer', date: '2024-02-13' }),
+      transaction('purchase', 500, { source: 'csv', name: 'Shop', kind: 'spending' }),
+      transaction('bank-payment', 1000, { source: 'plaid', accountId: 'bank', providerId: 'p1', name: 'Payment Thank You-Mobile', kind: 'refund', raw: { authorized_date: '2024-02-13' } }),
+      transaction('bank-refund', 500, { source: 'plaid', accountId: 'bank', providerId: 'p2', name: 'Shop', kind: 'refund' }),
+    ];
+    const next = applyCommand(s, link);
+    expect(next.transactions).toHaveLength(3);
+    expect(next.transactions.find(t => t.id === 'payment')!.edits).toMatchObject({ kind: 'transfer', date: '2024-02-13' });
+    expect(next.transactions.some(t => t.id === 'purchase')).toBe(true);
+    expect(next.transactions.some(t => t.id === 'bank-refund')).toBe(true);
+  });
   it('preserves Copilot replay protection and rewrites moved provider fingerprints', () => {
     const csv = 'date,name,amount,status,category,excluded,type,account,account mask\n2024-02-15,Shop,12,posted,Food,false,regular,My checking,1234';
     let s = importCopilot(fixture(), csv, { currency: 'USD', accounts: {} });

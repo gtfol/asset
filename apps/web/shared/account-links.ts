@@ -2,6 +2,13 @@ import type { State, Transaction } from './schema.js';
 
 const normalizedName = (name: string) => name.normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]/g, '');
 const family = (kind: Transaction['kind']) => ['transfer', 'card_payment', 'investment_transfer'].includes(kind) ? 'transfer' : kind;
+const compatibleKind = (left: Transaction['kind'], right: Transaction['kind']) => {
+  const a = family(left), b = family(right);
+  // A user's transfer classification often differs from the provider's refund/
+  // spending classification. Merchant, amount, account and date must still match.
+  if (a === b || a === 'transfer' || b === 'transfer') return true;
+  return ['income', 'refund'].includes(a) && ['income', 'refund'].includes(b);
+};
 const providerNames = (t: Transaction) => [t.name, t.raw?.name, t.raw?.merchant_name, t.raw?.original_description].filter((s): s is string => typeof s === 'string').map(normalizedName);
 
 export function importedMatch(candidates: Transaction[], provider: Transaction): Transaction | undefined {
@@ -10,7 +17,7 @@ export function importedMatch(candidates: Transaction[], provider: Transaction):
   const eligible = candidates.filter(t => !t.removed && !t.providerId &&
     ['csv', 'manual'].includes(t.source) && t.accountId === provider.accountId &&
     t.currency === provider.currency && t.amount === provider.amount &&
-    family(t.kind) === family(provider.kind) && dates.includes(t.date));
+    compatibleKind(t.kind, provider.kind) && dates.includes(t.date));
   const exact = eligible.filter(t => names.includes(normalizedName(t.name)));
   if (exact.length) return exact[0]; // Pair identical purchases one-to-one, never collapse a whole group.
   const partial = eligible.filter(t => {
@@ -62,7 +69,7 @@ export function previewAccountLink(state: State, importedId: string, connectedId
     if (match) {
       consumed.add(match.id);
       pairs.push({ importedId: match.id, providerId: t.id });
-    } else if (remaining.some(c => !c.removed && c.amount === t.amount && c.currency === t.currency && c.date === t.date && family(c.kind) === family(t.kind))) possible++;
+    } else if (remaining.some(c => !c.removed && c.amount === t.amount && c.currency === t.currency && [t.date, t.raw?.authorized_date].includes(c.date) && compatibleKind(c.kind, t.kind))) possible++;
   }
   return { imported, connected, pairs, possible, importedCount: candidates.filter(t => !t.removed).length };
 }
