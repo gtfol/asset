@@ -62,7 +62,9 @@ export function parseVenmoReceipt(input: {
     dollars = '',
     kind: 'spending' | 'refund' = 'spending';
   for (let i = 0; i < headings.length; i++) {
-    for (const line of [headings[i], `${headings[i]} ${headings[i + 1] ?? ''}`]) {
+    const lines = [headings[i]];
+    if (headings[i + 1]?.startsWith('$')) lines.push(`${headings[i]} ${headings[i + 1]}`);
+    for (const line of lines) {
       const outgoing = line.match(
         /^You paid (.{1,160}?)\s+\$((?:\d+|\d{1,3}(?:,\d{3})+)\.\d{2})[.!]?$/i,
       );
@@ -81,8 +83,9 @@ export function parseVenmoReceipt(input: {
   }
   if (!name) return { reason: 'Review the payment direction, person, and amount.' };
   const receiptId =
-    text.match(/\b(?:transaction|payment)\s*(?:id|number|#)\s*:?\s*(\d{8,30})\b/i)?.[1] ??
-    text.match(/https:\/\/(?:www\.)?venmo\.com\/transaction\/(\d{8,30})\b/i)?.[1];
+    text.match(
+      /\b(?:transaction|payment)\s*(?:id|number|#)\s*:?\s*((?=[A-Z0-9]*\d)[A-Z0-9]{8,30})\b/i,
+    )?.[1] ?? text.match(/https:\/\/(?:www\.)?venmo\.com\/transaction\/(\d{8,30})\b/i)?.[1];
   if (!receiptId)
     return { reason: 'This receipt has no recognized transaction ID. Review it before importing.' };
   const date = receiptDay(input.date ?? '', input.timeZone);

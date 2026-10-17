@@ -50,6 +50,23 @@ describe('Venmo receipt interpretation', () => {
     expect(parseVenmoReceipt({ ...input, text: 'no transaction ID' }).receipt).toBeUndefined();
     expect(parseVenmoReceipt({ ...input, date: '' }).receipt).toBeUndefined();
   });
+  it('keeps alphanumeric receipt identifiers intact for duplicate detection', () => {
+    const receipt = parseVenmoReceipt({
+      ...input,
+      subject:
+        'Taylor Reed paid $20.00 to your Venmo account. Leave it in Venmo or transfer it to your bank account.',
+      text: 'Taylor Reed paid you $20.00\nTransaction ID\n1AB23456CD7890123\nSent to @example',
+    }).receipt;
+    expect(receipt).toMatchObject({
+      receiptId: '1AB23456CD7890123',
+      name: 'Taylor Reed',
+      kind: 'refund',
+      amount: 2000,
+    });
+    expect(
+      parseVenmoReceipt({ ...input, text: 'Transaction ID: unavailable' }).receipt,
+    ).toBeUndefined();
+  });
   it('preserves imported metadata and matches one receipt only once, including removed records', () => {
     const state = fixture();
     state.accounts[0].source = 'venmo';
