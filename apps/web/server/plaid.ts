@@ -26,6 +26,20 @@ export class PlaidError extends Error {
     super(code);
   }
 }
+function syncErrorCode(error: unknown): string {
+  if (error instanceof PlaidError) return error.code;
+  const e = error as { status?: number; name?: string; code?: string; issues?: { path: unknown[]; code: string }[] };
+  const code = e?.status === 413 ? 'WORKSPACE_SIZE_LIMIT'
+    : e?.name === 'ZodError' ? 'SYNC_DATA_INVALID'
+    : /^[0-9A-Z]{5}$/.test(e?.code ?? '') ? 'SYNC_STORAGE_FAILED' : 'SYNC_FAILED';
+  console.error('Plaid sync could not be saved', {
+    code,
+    errorType: e?.name,
+    storageCode: code === 'SYNC_STORAGE_FAILED' ? e.code : undefined,
+    fields: e?.issues?.slice(0, 8).map(({ path, code }) => ({ path, code })),
+  });
+  return code;
+}
 export interface PlaidProvider {
   readonly environment?: PlaidEnvironment;
   assertCurrent?(tx: SQL, owner: string): Promise<void>;
@@ -522,7 +536,7 @@ export async function syncConnection(
     }
     return await commitSync(db, c, metadata, batch, investments, activity);
   } catch (e) {
-    const code = e instanceof PlaidError ? e.code : 'SYNC_FAILED';
+    const code = syncErrorCode(e);
     const status =
       code === 'ITEM_LOGIN_REQUIRED'
         ? 'reauthentication_required'
@@ -1047,7 +1061,7 @@ export async function processJob(
     }
     throw new PlaidError('SYNC_DEADLINE');
   } catch (error) {
-    const code = error instanceof PlaidError ? error.code : 'SYNC_FAILED';
+    const code = syncErrorCode(error);
     if (code === 'SYNC_LEASE_LOST') return true;
     await db.transaction(async (tx) => {
       // Match account-update/commit ordering: connection first, then its job lease.
