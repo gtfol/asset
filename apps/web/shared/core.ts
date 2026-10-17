@@ -1,5 +1,7 @@
 import { z } from 'zod';
 import { importCopilot, copilotOptionsSchema } from './copilot.js';
+import { linkImportedAccount } from './account-links.js';
+export * from './account-links.js';
 import {
   notificationPreferences,
   notificationPreferencesSchema,
@@ -626,6 +628,14 @@ function applyFinancialCommand(input: State, command: Command): State {
         ),
       };
       break;
+    }
+    case 'import.link-accounts': {
+      const links = z.array(z.object({ importedId: z.string(), connectedId: z.string() })).min(1).max(100).parse(p.links);
+      if (new Set(links.map(l => l.importedId)).size !== links.length || new Set(links.map(l => l.connectedId)).size !== links.length)
+        throw Error('Choose each account only once');
+      let linked = s;
+      for (const link of links) linked = linkImportedAccount(linked, link.importedId, link.connectedId);
+      return validateState(linked);
     }
     case 'import.commit': {
       const tx = z.array(transactionSchema).max(10000).parse(p.transactions);

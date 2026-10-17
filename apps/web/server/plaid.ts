@@ -13,6 +13,7 @@ import {
   applyRules,
   fingerprint,
   importFingerprint,
+  importedMatch,
   parseMoney,
   today,
   shiftMonth,
@@ -406,7 +407,7 @@ export function applyProviderRecords(
           !t.removed &&
           (t.source === 'csv' || t.source === 'manual') &&
           importFingerprint(t) === key,
-      );
+      ) ?? importedMatch(s.transactions, normalized);
       if (previous) {
         normalized.id = previous.id;
         previous.edits = {
@@ -455,7 +456,7 @@ export function applyProviderRecords(
   }
   for (const a of s.accounts.filter((a) => a.connectionId === c.id)) {
     const dates = s.transactions
-      .filter((t) => t.accountId === a.id && !t.removed && !t.pending)
+      .filter((t) => t.accountId === a.id && t.connectionId === c.id && !t.removed && !t.pending)
       .map((t) => t.date)
       .sort();
     a.coverageStart = dates[0] ?? a.coverageStart;

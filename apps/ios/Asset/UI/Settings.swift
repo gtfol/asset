@@ -561,6 +561,87 @@ struct NotificationInbox: View {
     }
   }
 }
+struct LinkImportedAccountsView: View {
+  @EnvironmentObject var store: Store
+  @State private var mapping: [String: String] = [:]
+  @State private var preview: String?
+  @State private var complete = ""
+  private var imported: [Row] {
+    store.accounts.filter { ["csv", "manual"].contains($0.text("source")) && $0.text("connectionId").isEmpty }
+  }
+  private func candidates(_ account: Row) -> [Row] {
+    store.accounts.filter {
+      $0.text("source") == "plaid" && $0.text("currency") == account.text("currency")
+        && ($0.text("type") == account.text("type") || account.text("type") == "manual")
+    }
+  }
+  private var links: [JSON] {
+    imported.compactMap { account in
+      guard let target = mapping[account.id], !target.isEmpty else { return nil }
+      return ["importedId": account.id, "connectedId": target]
+    }
+  }
+  var body: some View {
+    Form {
+      Section {
+        Text("Link CSV history to the same connected account. Your account name, categories, notes, and older transactions stay with its live balance.")
+          .foregroundStyle(Color.assetSecondary)
+        if !complete.isEmpty { Text(complete) }
+      }
+      ForEach(imported) { account in
+        Section(account.text("name") + " " + account.text("mask")) {
+          Picker("Connected account", selection: Binding(
+            get: { mapping[account.id] ?? "" },
+            set: { mapping[account.id] = $0; preview = nil }
+          )) {
+            Text("Keep separate").tag("")
+            ForEach(candidates(account)) { target in
+              Text(target.text("name") + " " + target.text("mask")).tag(target.id)
+            }
+          }.disabled(store.busy)
+        }
+      }
+      Section {
+        Button("Preview links") {
+          do {
+            let targets = links.compactMap { $0["connectedId"] as? String }
+            guard Set(targets).count == links.count else { throw failure("Choose each connected account only once.") }
+            var matched = 0, possible = 0
+            for link in links {
+              let result = Row(try store.engine.call("previewAccountLink", [store.state, link["importedId"]!, link["connectedId"]!]) as? JSON ?? [:])
+              matched += result.rows("pairs").count
+              possible += result.integer("possible")
+            }
+            preview = "\(links.count) accounts selected · \(matched) matching transactions combined."
+            if possible > 0 { preview! += " \(possible) other transactions share a date and amount. They remain separate for review." }
+          } catch { store.error = error.localizedDescription }
+        }.disabled(links.isEmpty || store.busy)
+        if let preview {
+          Text(preview)
+          Button("Link selected accounts") {
+            Task {
+              do {
+                let count = links.count
+                try await store.command("import.link-accounts", ["links": links])
+                complete = "\(count) accounts linked."
+                mapping = [:]
+                self.preview = nil
+              } catch { store.error = error.localizedDescription }
+            }
+          }.disabled(store.busy)
+        }
+      }
+    }
+    .assetTitle("Link imported history")
+    .onAppear {
+      for account in imported {
+        let matches = candidates(account).filter { !account.text("mask").isEmpty && $0.text("mask") == account.text("mask") }
+        mapping[account.id] = matches.count == 1 ? matches[0].id : ""
+      }
+    }
+    .onChange(of: store.workspaceGeneration) { _, _ in mapping = [:]; preview = nil; complete = "" }
+  }
+}
 struct ConnectionsView: View {
   @EnvironmentObject var store: Store
   @State private var product = "transactions"
@@ -660,6 +741,12 @@ struct ConnectionsView: View {
               ).foregroundStyle(Color.assetSecondary)
             }
           }
+        }
+      }
+      if store.accounts.contains(where: { $0.text("source") == "plaid" }) {
+        Section {
+          NavigationLink("Link imported history") { LinkImportedAccountsView() }
+            .disabled(locked)
         }
       }
       ForEach(store.connections) { c in

@@ -766,6 +766,7 @@ export function App() {
           sessionId={sessionId}
           receivedRedirectUri={plaidReturn}
           load={load}
+          run={run}
           onClose={() => {
             setModal(null);
             setPlaidReturn(undefined);
