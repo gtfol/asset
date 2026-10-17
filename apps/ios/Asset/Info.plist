@@ -12,6 +12,7 @@
 <key>CFBundleURLTypes</key><array><dict><key>CFBundleURLName</key><string>org.gtfol.asset.authentication</string><key>CFBundleURLSchemes</key><array><string>org.gtfol.asset</string></array></dict></array>
 <key>UIAppFonts</key><array><string>Lato-Regular.ttf</string><string>Lato-Medium.ttf</string></array>
 <key>UILaunchScreen</key><dict/>
+<key>NSFaceIDUsageDescription</key><string>Unlock your financial information when you open Asset.</string>
 <key>UIApplicationSceneManifest</key><dict><key>UIApplicationSupportsMultipleScenes</key><false/></dict>
 <key>UISupportedInterfaceOrientations</key><array><string>UIInterfaceOrientationPortrait</string><string>UIInterfaceOrientationLandscapeLeft</string><string>UIInterfaceOrientationLandscapeRight</string></array>
 <key>UISupportedInterfaceOrientations~ipad</key><array><string>UIInterfaceOrientationPortrait</string><string>UIInterfaceOrientationPortraitUpsideDown</string><string>UIInterfaceOrientationLandscapeLeft</string><string>UIInterfaceOrientationLandscapeRight</string></array>

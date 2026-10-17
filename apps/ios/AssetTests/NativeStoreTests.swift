@@ -41,6 +41,7 @@ private enum NativeStoreTests {
     let demo = try store.engine.call("createDemo", ["2026-10-15"]) as? JSON ?? [:]
     try expect(!demo.isEmpty, "Production calculation engine must load from the temporary bundle")
     try checkGoogleSignIn()
+    try checkAppLock()
     try checkPlaidLifecycle()
     try checkAPIRequests()
     try checkIdentitiesAndTransactions(store: store, demo: demo)
@@ -50,6 +51,46 @@ private enum NativeStoreTests {
     print(
       "PASS: \(checks) native sign-in, Plaid lifecycle, API requests, Store identity, filtering, paging, and cache invalidation checks."
     )
+  }
+
+  private static func checkAppLock() throws {
+    var lock = AppLockLifecycle()
+    lock.configure(protected: true, active: true)
+    try expect(lock.hidden && lock.locked, "Private workspaces start locked")
+    let first = lock.begin()!
+    lock.resign()
+    try expect(
+      lock.hidden && lock.authenticating,
+      "Biometric system prompt keeps the privacy cover without cancelling authentication")
+    lock.activate()
+    try expect(
+      lock.begin() == nil, "Activation during authentication must not create a second prompt")
+    try expect(
+      lock.finish(first, success: true) && !lock.hidden,
+      "Successful authentication reveals only the active workspace")
+    lock.resign()
+    try expect(
+      lock.hidden && lock.locked, "Opening the switcher immediately hides and relocks the workspace"
+    )
+    lock.activate()
+    let second = lock.begin()!
+    lock.background()
+    try expect(
+      !lock.finish(second, success: true) && lock.hidden,
+      "A delayed success after backgrounding cannot unlock the app")
+    lock.activate()
+    let third = lock.begin()!
+    try expect(
+      lock.finish(third, success: false) && lock.hidden,
+      "Cancelled or failed authentication stays locked")
+    let fourth = lock.begin()!
+    lock.configure(protected: false, active: true)
+    try expect(
+      !lock.finish(fourth, success: true) && !lock.hidden,
+      "Workspace changes invalidate an in-flight unlock")
+    lock.configure(protected: true, active: true)
+    try expect(
+      lock.locked && lock.hidden, "Reopening a private workspace requires fresh authentication")
   }
 
   private static func checkGoogleSignIn() throws {

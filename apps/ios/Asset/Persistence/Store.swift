@@ -4,6 +4,47 @@ import Security
 import SwiftUI
 
 typealias JSON = [String: Any]
+struct AppLockLifecycle {
+  private(set) var protected = false
+  private(set) var locked = true
+  private(set) var inactive = true
+  private(set) var authenticating = false
+  private(set) var attempt = 0
+  var hidden: Bool { protected && (locked || inactive) }
+  mutating func configure(protected: Bool, active: Bool) {
+    guard self.protected != protected else { return }
+    self.protected = protected
+    cancel()
+    locked = protected
+    inactive = !active
+  }
+  mutating func resign() {
+    inactive = true
+    if !authenticating { locked = protected }
+  }
+  mutating func background() {
+    cancel()
+    inactive = true
+    locked = protected
+  }
+  mutating func activate() { inactive = false }
+  mutating func cancel() {
+    attempt += 1
+    authenticating = false
+  }
+  mutating func begin() -> Int? {
+    guard protected, locked, !inactive, !authenticating else { return nil }
+    attempt += 1
+    authenticating = true
+    return attempt
+  }
+  @discardableResult mutating func finish(_ id: Int, success: Bool) -> Bool {
+    guard protected, id == attempt, authenticating else { return false }
+    authenticating = false
+    locked = !success
+    return true
+  }
+}
 struct Row: Identifiable {
   var data: JSON
   let id: String
@@ -527,13 +568,16 @@ enum SessionKey {
     }
   }
   func bitcoinRequest(_ path: String, body: JSON = [:]) async throws {
-    guard mode == "remote", !isDemo else { throw failure("Sign in to track a real Bitcoin address") }
+    guard mode == "remote", !isDemo else {
+      throw failure("Sign in to track a real Bitcoin address")
+    }
     let generation = workspaceGeneration
     let server = baseURL
     let token = SessionKey.read()
     let r = try await request(path, body: body, server: server, token: token)
     guard mode == "remote", generation == workspaceGeneration, server == baseURL,
-      token == SessionKey.read() else { throw failure("Workspace changed during Bitcoin sync") }
+      token == SessionKey.read()
+    else { throw failure("Workspace changed during Bitcoin sync") }
     let nextRevision = r["revision"] as? Int ?? 0
     guard nextRevision >= revision else { return }
     let next = try engine.call("validateState", [r["state"] as? JSON ?? [:]]) as? JSON ?? [:]
@@ -543,7 +587,8 @@ enum SessionKey {
   }
   func refreshBitcoin() async {
     guard mode == "remote", !isDemo, !busy,
-      accounts.contains(where: { $0.text("source") == "bitcoin" }) else { return }
+      accounts.contains(where: { $0.text("source") == "bitcoin" })
+    else { return }
     let generation = workspaceGeneration
     do {
       try await bitcoinRequest("/bitcoin/refresh")

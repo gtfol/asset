@@ -2443,3 +2443,57 @@ dialog label {
 .workspace-label > span {
   min-width: 0;
 }
+.notification-setting {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  min-height: 52px;
+  margin: 0;
+  border-bottom: 1px solid var(--border);
+}
+.notification-setting input {
+  flex: 0 0 auto;
+}
+.notification-setting input[type='checkbox'] {
+  appearance: none;
+  width: 36px;
+  height: 22px;
+  padding: 2px;
+  border: 0;
+  border-radius: 12px;
+  background: var(--control-border);
+  cursor: pointer;
+}
+.notification-setting input[type='checkbox']::before {
+  content: '';
+  display: block;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--canvas);
+}
+.notification-setting input[type='checkbox']:checked { background: var(--text); }
+.notification-setting input[type='checkbox']:checked::before { transform: translateX(14px); }
+.notification-setting + .form-grid { margin-top: 24px; }
+.import-preview td small { display: block; margin-top: 4px; }
+.import-preview > h3 { margin: 20px 0 12px; }
+.notification-list {
+  display: grid;
+}
+.notification-item {
+  display: grid;
+  gap: 8px;
+  padding: 18px 0;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+}
+.notification-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  margin-left: 6px;
+}

@@ -7,6 +7,7 @@ struct RootView: View {
   @State var month = String(dateToday().prefix(7))
   @State var settings = false
   @State var add = false
+  @State var notifications = false
   let pages = ["Dashboard", "Transactions", "Accounts", "Investments", "Categories", "Cash Flow"]
   var body: some View {
     Group {
@@ -59,6 +60,16 @@ struct RootView: View {
               }.quietBackground()
               ToolbarItem(placement: .topBarTrailing) {
                 Button {
+                  notifications = true
+                } label: {
+                  Image(
+                    systemName: store.row.object("notifications").rows("items").contains(where: {
+                      !$0.flag("read")
+                    }) ? "bell.badge" : "bell")
+                }.accessibilityLabel("Notifications").tint(.assetText)
+              }.quietBackground()
+              ToolbarItem(placement: .topBarTrailing) {
+                Button {
                   add = true
                 } label: {
                   Image(systemName: "plus")
@@ -68,6 +79,7 @@ struct RootView: View {
               }.quietBackground()
             }
             .sheet(isPresented: $settings) { SettingsView() }
+            .sheet(isPresented: $notifications) { NotificationInbox() }
             .sheet(isPresented: $add) {
               switch page {
               case "Accounts": AccountForm()
@@ -79,13 +91,17 @@ struct RootView: View {
             .task { await store.refresh() }
             .task(id: scenePhase) {
               while scenePhase == .active && !Task.isCancelled {
+                await store.refresh()
                 await store.refreshBitcoin()
                 do { try await Task.sleep(for: .seconds(60)) } catch { return }
               }
             }
         }
       }
-    }.alert(
+    }.onReceive(NotificationCenter.default.publisher(for: .assetOpenNotifications)) { _ in
+      notifications = true
+    }
+    .alert(
       "Asset",
       isPresented: Binding(get: { !store.error.isEmpty }, set: { if !$0 { store.error = "" } })
     ) {

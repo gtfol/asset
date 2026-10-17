@@ -6,6 +6,7 @@ import { createDemo } from '../shared/demo.js';
 import { getState, mutateState, type Database } from './db.js';
 import { authenticated, newSession, readToken, tokenHash } from './auth.js';
 import { bitcoinRoutes, type BitcoinProvider } from './bitcoin.js';
+import { notificationRoutes, notificationWorker } from './notifications.js';
 import {
   PlaidClient,
   assertConnectionEnvironment,
@@ -77,7 +78,8 @@ export function createApp(
     )
       processed++;
     console.info('Plaid sync worker completed', { processed });
-    res.json({ ok: true, processed });
+    const delivered = await notificationWorker(db, deadline);
+    res.json({ ok: true, processed, delivered });
   });
   app.post(
     '/api/plaid/webhook',
@@ -176,6 +178,7 @@ export function createApp(
     res.status(410).json({ error: 'Email sign-in is no longer supported. Continue with Google.' });
   });
   app.use('/api', authenticated(db));
+  app.use('/api/notifications', notificationRoutes(db));
   app.use('/api/bitcoin', (req, res, next) => {
     const expected = req.header('x-asset-session');
     if (
@@ -228,6 +231,7 @@ export function createApp(
           return applyCommand(s, c as Command);
         },
         c.revision,
+        c.type.startsWith('import.') || c.type === 'backup.restore',
       ),
     );
   });

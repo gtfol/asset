@@ -13,6 +13,9 @@ import {
   type Command,
 } from '../shared/core';
 import { parseCSV, previewCSV, exportCSV, type CSVOptions } from '../shared/csv';
+import { isCopilotCSV } from '../shared/copilot';
+import { CopilotImport } from './copilot';
+import { NotificationPreferences } from './notifications';
 import { categoryIcons, categoryIconKey } from '../shared/category-icons';
 import { Modal, Badge, Status, Empty } from './components';
 import { api, type Run } from './App';
@@ -93,6 +96,7 @@ export function TransactionEditor({
             categoryId: draft.categoryId,
             kind: draft.kind,
             notes: draft.notes,
+            recurring: draft.recurring ?? '',
             excluded: draft.excluded,
           },
           reviewed: draft.reviewed,
@@ -173,6 +177,14 @@ export function TransactionEditor({
             placeholder="Add a note…"
             value={draft.notes}
             onChange={(e) => setDraft({ ...draft, notes: e.target.value })}
+          />
+        </label>
+        <label>
+          Recurring payment label (optional)
+          <input
+            value={draft.recurring ?? ''}
+            maxLength={160}
+            onChange={(e) => setDraft({ ...draft, recurring: e.target.value })}
           />
         </label>
         <label className="check-label">
@@ -537,7 +549,16 @@ export function AccountEditor({
                 name: f.get('name'),
                 type: connected ? a.type : f.get('type'),
                 currency: connected ? a.currency : f.get('currency'),
-                balance: connected ? a.balance : parseMoney(String(f.get('balance'))),
+                balance: connected
+                  ? a.balance
+                  : f.get('balance')
+                    ? parseMoney(String(f.get('balance')))
+                    : null,
+                creditLimit: connected
+                  ? a.creditLimit
+                  : f.get('creditLimit')
+                    ? parseMoney(String(f.get('creditLimit')))
+                    : null,
                 includeInNetWorth: f.get('included') === 'on',
                 enabled: a?.enabled ?? true,
                 source: a?.source ?? 'manual',
@@ -576,8 +597,8 @@ export function AccountEditor({
               name="balance"
               disabled={connected}
               inputMode="decimal"
-              defaultValue={(a?.balance ?? 0) / 100}
-              required
+              defaultValue={a?.balance == null ? '' : a.balance / 100}
+              placeholder="Unknown"
             />
           </label>
           <label>
@@ -589,6 +610,15 @@ export function AccountEditor({
             </select>
           </label>
         </div>
+        <label>
+          Credit limit (credit cards only, optional)
+          <input
+            name="creditLimit"
+            inputMode="decimal"
+            disabled={connected}
+            defaultValue={a?.creditLimit == null ? '' : a.creditLimit / 100}
+          />
+        </label>
         <p className="tiny muted">
           Enter debt as a positive amount owed. Account balances are separate from transaction
           totals.
@@ -827,7 +857,10 @@ export function ImportDialog({
               }}
             />
           </label>
-          {headers.length > 0 && (
+          {isCopilotCSV(headers) && (
+            <CopilotImport key={text} text={text} state={state} run={run} onDone={setDone} />
+          )}
+          {headers.length > 0 && !isCopilotCSV(headers) && (
             <>
               <div className="form-grid">
                 {(['date', 'name', 'amount', 'category', 'type', 'currency'] as const).map(
@@ -1009,6 +1042,7 @@ export function SettingsDialog({
     [theme, setTheme] = useState(localStorage.getItem('asset-theme') ?? 'light');
   return (
     <Modal title="Settings & data" onClose={onClose}>
+      <NotificationPreferences state={state} run={run} />
       <label className="theme-control">
         Appearance
         <select

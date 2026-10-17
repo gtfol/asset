@@ -67,6 +67,7 @@ struct TransactionForm: View {
   @State var category = "other"
   @State var kind = "spending"
   @State var notes = ""
+  @State var recurring = ""
   @State var excluded = false
   @State var reviewed = false
   @State var createRule = false
@@ -93,6 +94,7 @@ struct TransactionForm: View {
       }
       Section {
         TextField("Notes", text: $notes, axis: .vertical).lineLimit(3...6)
+        TextField("Recurring payment label (optional)", text: $recurring)
         Toggle("Exclude from budget", isOn: $excluded)
         Toggle("Reviewed", isOn: $reviewed)
       }
@@ -157,6 +159,7 @@ struct TransactionForm: View {
         category = t.text("categoryId")
         kind = t.text("kind")
         notes = t.text("notes")
+        recurring = t.text("recurring")
         excluded = t.flag("excluded")
         reviewed = t.flag("reviewed")
         splits = t.rows("splits").map {
@@ -207,6 +210,7 @@ struct TransactionForm: View {
           "edits": [
             "name": name, "date": date, "categoryId": category, "kind": kind, "notes": notes,
             "excluded": excluded,
+            "recurring": recurring,
           ], "reviewed": reviewed,
         ])
       if splitting && !reconciling {
@@ -227,6 +231,7 @@ struct TransactionForm: View {
           "id": uid(), "name": name, "date": date, "amount": cents, "kind": kind,
           "accountId": account, "currency": a.text("currency"), "categoryId": category,
           "source": "manual", "importedAt": isoNow(), "notes": notes, "excluded": excluded,
+          "recurring": recurring,
           "reviewed": reviewed, "splits": parts,
         ])
     }
@@ -237,18 +242,27 @@ struct BitcoinAddressForm: View {
   @State var name = ""
   @State var address = ""
   var body: some View {
-    FormShell(title: "Track Bitcoin address", save: {
-      try await store.bitcoinRequest("/bitcoin/wallets", body: ["name": name, "address": address])
-    }) {
+    FormShell(
+      title: "Track Bitcoin address",
+      save: {
+        try await store.bitcoinRequest(
+          "/bitcoin/wallets", body: ["name": name, "address": address])
+      }
+    ) {
       Section {
         TextField("Name", text: $name)
         TextField("Public Bitcoin address", text: $address)
           .textInputAutocapitalization(.never).autocorrectionDisabled()
       }
       Section {
-        Text("Read-only tracking. Never enter a private key or recovery phrase. Add each receiving or change address you want included; a single address may not cover your whole wallet.")
-        Text("The public address is sent to Blockstream for balances and history. USD prices come from Coinbase. No Plaid connection is used.")
-      }.font(.custom("Lato-Regular", size: 13, relativeTo: .caption)).foregroundStyle(Color.assetSecondary)
+        Text(
+          "Read-only tracking. Never enter a private key or recovery phrase. Add each receiving or change address you want included; a single address may not cover your whole wallet."
+        )
+        Text(
+          "The public address is sent to Blockstream for balances and history. USD prices come from Coinbase. No Plaid connection is used."
+        )
+      }.font(.custom("Lato-Regular", size: 13, relativeTo: .caption)).foregroundStyle(
+        Color.assetSecondary)
     }
   }
 }
@@ -258,7 +272,8 @@ struct AccountForm: View {
   @State var name = ""
   @State var type = "checking"
   @State var currency = "USD"
-  @State var balance = "0.00"
+  @State var balance = ""
+  @State var creditLimit = ""
   @State var included = true
   @State var start = ""
   @State var end = ""
@@ -274,7 +289,10 @@ struct AccountForm: View {
         p["name"] = name
         p["type"] = type
         p["currency"] = currency
-        p["balance"] = try store.cents(balance)
+        if !connected {
+          p["balance"] = balance.isEmpty ? NSNull() : try store.cents(balance) as Any
+          p["creditLimit"] = creditLimit.isEmpty ? NSNull() : try store.cents(creditLimit) as Any
+        }
         p["includeInNetWorth"] = included
         p["enabled"] = account?.flag("enabled") ?? true
         p["source"] = account?.text("source") ?? "manual"
@@ -294,6 +312,10 @@ struct AccountForm: View {
         }.disabled(connected)
         TextField("Balance", text: $balance).keyboardType(.numbersAndPunctuation).disabled(
           connected)
+        if type == "credit" {
+          TextField("Credit limit (optional)", text: $creditLimit).keyboardType(.decimalPad)
+            .disabled(connected)
+        }
         Picker("Currency", selection: $currency) {
           ForEach(["USD", "CAD", "EUR", "GBP"], id: \.self) { Text($0) }
         }.disabled(connected)
@@ -321,7 +343,8 @@ struct AccountForm: View {
         name = a.text("name")
         type = a.text("type")
         currency = a.text("currency")
-        balance = String(a.number("balance") / 100)
+        balance = a.missing("balance") ? "" : String(a.number("balance") / 100)
+        creditLimit = a.missing("creditLimit") ? "" : String(a.number("creditLimit") / 100)
         included = a.flag("includeInNetWorth")
         start = a.text("coverageStart")
         end = a.text("coverageEnd")
@@ -424,7 +447,11 @@ struct HoldingForm: View {
         TextField("Ticker", text: $symbol)
         TextField("Security name", text: $name)
         Picker("Account", selection: $account) {
-          ForEach(store.accounts.filter { $0.text("type") == "investment" && $0.text("source") != "bitcoin" }) {
+          ForEach(
+            store.accounts.filter {
+              $0.text("type") == "investment" && $0.text("source") != "bitcoin"
+            }
+          ) {
             Text($0.text("name")).tag($0.id)
           }
         }
@@ -443,7 +470,9 @@ struct HoldingForm: View {
     }.onAppear {
       guard !loaded else { return }
       loaded = true
-      account = store.accounts.first { $0.text("type") == "investment" && $0.text("source") != "bitcoin" }?.id ?? ""
+      account =
+        store.accounts.first { $0.text("type") == "investment" && $0.text("source") != "bitcoin" }?
+        .id ?? ""
       if let h = holding {
         symbol = h.text("symbol")
         name = h.text("name")

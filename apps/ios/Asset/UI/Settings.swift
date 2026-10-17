@@ -133,6 +133,17 @@ struct SettingsView: View {
             Text("Dark").tag("dark")
           }
         }
+        Section("Privacy") {
+          Label("Touch ID or Face ID on reopen", systemImage: "lock")
+          Text(
+            "Your device passcode is available as a fallback. Financial information is covered in the app switcher."
+          )
+          .font(.custom("Lato-Regular", size: 13, relativeTo: .caption)).foregroundStyle(
+            Color.assetSecondary)
+        }
+        Section {
+          NavigationLink("Notifications") { NotificationSettings() }
+        }
         Section("Reporting") {
           Picker(
             "Currency",
@@ -221,6 +232,9 @@ struct ImportView: View {
   @State var convention = "outflow-positive"
   @State var preview: Row?
   @State var report = ""
+  var isCopilot: Bool {
+    ["account mask", "parent category", "excluded", "status"].allSatisfy(headers.contains)
+  }
   var options: JSON {
     [
       "mapping": mapping, "accountId": account,
@@ -234,7 +248,8 @@ struct ImportView: View {
         Button("Choose CSV file") { choosing = true }
         if !report.isEmpty { Text(report).foregroundStyle(Color.assetGreen) }
       }
-      if !headers.isEmpty {
+      if isCopilot { CopilotImportSections(text: text).id(text) }
+      if !headers.isEmpty && !isCopilot {
         Section("Map columns") {
           ForEach(["date", "name", "amount", "category", "type", "currency"], id: \.self) { key in
             Picker(
@@ -331,6 +346,210 @@ struct ImportView: View {
         preview = nil
         report = ""
       } catch { store.error = error.localizedDescription }
+    }
+  }
+}
+struct CopilotImportSections: View {
+  @EnvironmentObject var store: Store
+  let text: String
+  @State var groups: [Row] = []
+  @State var mapping: JSON = [:]
+  @State var currency = "USD"
+  @State var preview: Row?
+  @State var complete = false
+  var options: JSON { ["currency": currency, "accounts": mapping] }
+  var body: some View {
+    Section("Copilot export") {
+      Text(
+        "Preserves accounts, categories, notes, exclusions, and recurring labels. Balances and holdings are not included."
+      )
+      .foregroundStyle(Color.assetSecondary)
+      Picker("Currency", selection: $currency) {
+        ForEach(["USD", "CAD", "EUR", "GBP"], id: \.self) { Text($0) }
+      }.onChange(of: currency) { _, _ in preview = nil }
+    }
+    ForEach(groups, id: \.dataKey) { group in
+      let key = group.text("key")
+      let selected = Row(mapping[key] as? JSON ?? group.data)
+      Section(group.text("name") + (group.text("mask").isEmpty ? "" : " · " + group.text("mask"))) {
+        Picker(
+          "Import into",
+          selection: Binding(
+            get: { selected.text("accountId") },
+            set: {
+              var value = selected.data
+              value["accountId"] = $0.isEmpty ? nil : $0
+              mapping[key] = value
+              preview = nil
+            })
+        ) {
+          Text("Create account").tag("")
+          ForEach(
+            store.accounts.filter {
+              $0.text("source") != "bitcoin" && $0.text("currency") == currency
+            }
+          ) { a in
+            Text(a.text("name") + " " + a.text("mask")).tag(a.id)
+          }
+        }
+        if selected.text("accountId").isEmpty {
+          Picker(
+            "Type",
+            selection: Binding(
+              get: { selected.text("type", "manual") },
+              set: {
+                var value = selected.data
+                value["type"] = $0
+                mapping[key] = value
+                preview = nil
+              })
+          ) {
+            ForEach(["checking", "savings", "credit", "investment", "loan", "manual"], id: \.self) {
+              Text($0.capitalized).tag($0)
+            }
+          }
+        }
+      }
+    }
+    Section {
+      Button("Preview Copilot import") {
+        do {
+          preview = Row(
+            try store.engine.call("previewCopilot", [text, options, store.state]) as? JSON ?? [:])
+        } catch { store.error = error.localizedDescription }
+      }.disabled(complete)
+      if let p = preview {
+        Text("\(p.rows("transactions").count) ready · \(p.integer("duplicates")) already imported")
+        Text(
+          "\(p.rows("accounts").count) new accounts · \(p.integer("pending")) pending transactions")
+        ForEach(Array(p.rows("errors").enumerated()), id: \.offset) { _, error in
+          Text("Row \(error.integer("row")): \(error.text("message"))").foregroundStyle(
+            Color.assetError)
+        }
+        Button(complete ? "Import complete" : "Import \(p.rows("transactions").count) transactions")
+        {
+          Task {
+            do {
+              try await store.command("import.copilot", ["text": text, "options": options])
+              complete = true
+            } catch { store.error = error.localizedDescription }
+          }
+        }.disabled(
+          complete || store.busy || p.rows("transactions").isEmpty || !p.rows("errors").isEmpty)
+      }
+    }.onAppear {
+      currency = store.currency
+      do {
+        groups = (try store.engine.call("copilotAccounts", [text, store.state]) as? [JSON] ?? [])
+          .map(Row.init)
+      } catch { store.error = error.localizedDescription }
+    }
+  }
+}
+extension Row { fileprivate var dataKey: String { text("key") } }
+struct NotificationSettings: View {
+  @EnvironmentObject var store: Store
+  @ObservedObject var delivery = NotificationDelivery.shared
+  @State var amount = "500"
+  @State var percent = "30"
+  let kinds = [
+    ("bankFee", "Bank fee alert"), ("bigExpense", "Big expense alert"),
+    ("creditUtilization", "Credit utilization alert"), ("income", "Income update"),
+    ("recurringPaid", "Recurring paid alert"), ("spending", "Spending update"),
+    ("uncategorizedTransfer", "Uncategorized transfer alert"), ("venmo", "Venmo transaction alert"),
+  ]
+  var preferences: Row { store.calculation("notificationPreferences") }
+  var body: some View {
+    List {
+      Section {
+        ForEach(kinds, id: \.0) { key, title in
+          Toggle(
+            title,
+            isOn: Binding(
+              get: { preferences.flag(key) },
+              set: {
+                store.perform("notifications.preferences", [key: $0])
+              })
+          ).disabled(store.busy)
+        }
+      }
+      Section("Thresholds") {
+        TextField("Big expense (\(store.currency))", text: $amount).keyboardType(.decimalPad)
+        TextField("Credit utilization (%)", text: $percent).keyboardType(.numberPad)
+        Button("Save thresholds") {
+          do {
+            guard let value = Int(percent), (1...100).contains(value) else {
+              throw failure("Enter a percentage from 1 to 100")
+            }
+            store.perform(
+              "notifications.preferences",
+              ["bigExpenseAmount": try store.cents(amount), "creditUtilizationPercent": value])
+          } catch { store.error = error.localizedDescription }
+        }.disabled(store.busy)
+      }
+      Section("Delivery") {
+        Text(delivery.message).foregroundStyle(Color.assetSecondary)
+        if delivery.available && !delivery.enabled {
+          Button("Enable iPhone notifications") { Task { await delivery.enable() } }
+          Button("Open notification settings") {
+            if let url = URL(string: UIApplication.openNotificationSettingsURLString) {
+              UIApplication.shared.open(url)
+            }
+          }
+        }
+        Text(
+          "Alerts follow newly posted activity. Imported history stays quiet. Credit alerts need a reported credit limit; recurring alerts follow labeled payments. Spending updates arrive after 7 pm in your workspace’s time zone. Venmo alerts begin when new activity is received."
+        )
+        .font(.custom("Lato-Regular", size: 13, relativeTo: .caption)).foregroundStyle(
+          Color.assetSecondary)
+      }
+    }.assetTitle("Notifications").task {
+      amount = String(preferences.integer("bigExpenseAmount") / 100)
+      percent = String(preferences.integer("creditUtilizationPercent"))
+      await delivery.prepare(store: store)
+    }
+  }
+}
+struct NotificationInbox: View {
+  @EnvironmentObject var store: Store
+  @SwiftUI.Environment(\.dismiss) var dismiss
+  var items: [Row] { store.row.object("notifications").rows("items") }
+  var body: some View {
+    NavigationStack {
+      List {
+        if items.isEmpty {
+          Text("You’re up to date. Alerts appear after new activity syncs.").foregroundStyle(
+            Color.assetSecondary)
+        }
+        ForEach(items) { item in
+          NavigationLink {
+            if let id = item.data["transactionId"] as? String,
+              let transaction = store.transactions.first(where: { $0.id == id })
+            {
+              TransactionForm(transaction: transaction)
+            } else {
+              Text(item.text("body")).padding().assetTitle(item.text("title"))
+            }
+          } label: {
+            VStack(alignment: .leading, spacing: 8) {
+              Text(item.text("title")).font(
+                .custom(item.flag("read") ? "Lato-Regular" : "Lato-Medium", size: 16))
+              Text(item.text("body")).foregroundStyle(Color.assetSecondary)
+              Text(String(item.text("createdAt").prefix(10))).font(
+                .custom("Lato-Regular", size: 12)
+              ).foregroundStyle(Color.assetSecondary)
+            }.padding(.vertical, 6)
+          }.simultaneousGesture(
+            TapGesture().onEnded { store.perform("notifications.read", ["ids": [item.id]]) })
+        }
+      }.assetTitle("Notifications").toolbar {
+        ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } }
+          .quietBackground()
+        ToolbarItem(placement: .topBarTrailing) {
+          Button("Read all") { store.perform("notifications.read", ["ids": items.map(\.id)]) }
+            .disabled(items.allSatisfy { $0.flag("read") })
+        }.quietBackground()
+      }
     }
   }
 }
@@ -565,9 +784,11 @@ struct ConnectionsView: View {
         TextField("Client ID", text: $clientID)
           .textInputAutocapitalization(.never).autocorrectionDisabled()
           .disabled(locked || !storageReady)
-        SecureField(environment == "sandbox" ? "Sandbox secret" : "Production secret", text: $secret)
-          .textInputAutocapitalization(.never).autocorrectionDisabled()
-          .disabled(locked || !storageReady)
+        SecureField(
+          environment == "sandbox" ? "Sandbox secret" : "Production secret", text: $secret
+        )
+        .textInputAutocapitalization(.never).autocorrectionDisabled()
+        .disabled(locked || !storageReady)
         Button(configuration.flag("configured") ? "Update credentials" : "Save credentials") {
           let payload: JSON = [
             "clientId": clientID.trimmingCharacters(in: .whitespacesAndNewlines),

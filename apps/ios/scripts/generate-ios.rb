@@ -17,6 +17,7 @@ resources = group.new_group('Resources', 'Resources')
   target.resources_build_phase.add_file_reference(resources.new_file(name))
 end
 group.new_file('Info.plist')
+group.new_file('Asset.entitlements')
 target.resources_build_phase.add_file_reference(group.new_file('Assets.xcassets'))
 package = project.new(Xcodeproj::Project::Object::XCRemoteSwiftPackageReference)
 package.repositoryURL = 'https://github.com/plaid/plaid-link-ios-spm.git'
@@ -39,6 +40,8 @@ target.build_configurations.each do |config|
     'INFOPLIST_FILE'=>'Asset/Info.plist', 'GENERATE_INFOPLIST_FILE'=>'NO',
     'MARKETING_VERSION'=>'0.1.0', 'CURRENT_PROJECT_VERSION'=>'1',
     'TARGETED_DEVICE_FAMILY'=>'1,2', 'CODE_SIGN_STYLE'=>'Automatic',
+    'CODE_SIGN_ENTITLEMENTS'=>'Asset/Asset.entitlements',
+    'APS_ENVIRONMENT'=>(config.name == 'Release' ? 'production' : 'development'),
     'ENABLE_USER_SCRIPT_SANDBOXING'=>'YES',
     'ASSETCATALOG_COMPILER_APPICON_NAME'=>'AppIcon',
     'ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME'=>'AccentColor'

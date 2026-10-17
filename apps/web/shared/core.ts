@@ -1,4 +1,11 @@
 import { z } from 'zod';
+import { importCopilot, copilotOptionsSchema } from './copilot.js';
+import {
+  notificationPreferences,
+  notificationPreferencesSchema,
+  updateNotifications,
+} from './notifications.js';
+export * from './notifications.js';
 import {
   stateSchema,
   validateState,
@@ -429,6 +436,19 @@ export function emptyState(): State {
   };
 }
 export function applyCommand(input: State, command: Command): State {
+  const next = applyFinancialCommand(input, command);
+  return validateState(
+    updateNotifications(
+      input,
+      next,
+      new Date().toISOString(),
+      command.type.startsWith('import.') ||
+        command.type === 'backup.restore' ||
+        command.type.startsWith('notifications.'),
+    ),
+  );
+}
+function applyFinancialCommand(input: State, command: Command): State {
   const s = validateState(JSON.parse(JSON.stringify(input))),
     p = command.payload;
   const id = String(p.id ?? '');
@@ -591,6 +611,22 @@ export function applyCommand(input: State, command: Command): State {
         ...stateSchema.shape.settings.partial().omit({ demo: true }).parse(p),
       };
       break;
+    case 'notifications.preferences':
+      s.notifications = {
+        items: s.notifications?.items ?? [],
+        preferences: notificationPreferencesSchema.parse({ ...notificationPreferences(s), ...p }),
+      };
+      break;
+    case 'notifications.read': {
+      const ids = z.array(z.string()).max(200).parse(p.ids);
+      s.notifications = {
+        preferences: notificationPreferences(s),
+        items: (s.notifications?.items ?? []).map((n) =>
+          ids.includes(n.id) ? { ...n, read: true } : n,
+        ),
+      };
+      break;
+    }
     case 'import.commit': {
       const tx = z.array(transactionSchema).max(10000).parse(p.transactions);
       const seen = new Set(s.transactions.filter((t) => !t.removed).map(importFingerprint));
@@ -604,12 +640,26 @@ export function applyCommand(input: State, command: Command): State {
       }
       break;
     }
+    case 'import.copilot': {
+      return validateState(
+        importCopilot(
+          s,
+          z
+            .string()
+            .max(10 * 1024 * 1024)
+            .parse(p.text),
+          copilotOptionsSchema.parse(p.options),
+        ),
+      );
+    }
     case 'backup.restore': {
       const restored = validateState(p.state);
       if (restored.accounts.some((a) => a.source === 'plaid'))
         throw Error('Restore backups with disconnected account provenance');
       if (restored.settings.demo !== s.settings.demo)
         throw Error('Demo and private data cannot be mixed');
+      // Restoring history should not replay old alerts on registered devices.
+      restored.notifications = { preferences: notificationPreferences(restored), items: [] };
       return restored;
     }
     default:

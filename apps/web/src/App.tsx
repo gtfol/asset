@@ -12,6 +12,7 @@ import {
   Wallet,
   LogOut,
   Link2,
+  Bell,
 } from 'lucide-react';
 import {
   dashboard,
@@ -61,6 +62,7 @@ import {
 } from './transactions';
 import { clearPlaidAttempt } from './plaid-link';
 import { BitcoinAdd, BitcoinDetail, type BitcoinRequest } from './bitcoin';
+import { NotificationsDialog } from './notifications';
 export async function api(
   path: string,
   body?: unknown,
@@ -200,6 +202,13 @@ export function App() {
   useEffect(() => {
     void load();
   }, [load]);
+  useEffect(() => {
+    if (!sessionId || state?.settings.demo) return;
+    const timer = setInterval(() => {
+      if (document.visibilityState === 'visible') void load();
+    }, 60000);
+    return () => clearInterval(timer);
+  }, [sessionId, state?.settings.demo, load]);
   useEffect(() => {
     if (state && plaidReturn && !openedPlaidReturn.current) {
       openedPlaidReturn.current = true;
@@ -375,6 +384,16 @@ export function App() {
           </button>
           <h1>{page}</h1>
           <div className="topbar-actions">
+            <button
+              className="icon-button"
+              aria-label={`Notifications${state.notifications?.items.some((n) => !n.read) ? ', unread activity' : ''}`}
+              onClick={() => setModal({ kind: 'notifications' })}
+            >
+              <Bell size={18} />
+              {state.notifications?.items.some((n) => !n.read) && (
+                <span className="notification-dot" />
+              )}
+            </button>
             {state.settings.demo && (
               <span className="demo-pill" title="Synthetic data">
                 Demo
@@ -720,6 +739,23 @@ export function App() {
       )}
       {modal?.kind === 'settings' && (
         <SettingsDialog state={state} run={run} onClose={() => setModal(null)} />
+      )}
+      {modal?.kind === 'notifications' && (
+        <NotificationsDialog
+          state={state}
+          run={run}
+          onClose={() => setModal(null)}
+          onOpen={(transactionId, accountId) => {
+            setModal(null);
+            if (transactionId) {
+              navigate('Transactions');
+              setSelected(transactionId);
+            } else if (accountId) {
+              navigate('Accounts');
+              setSelected(accountId);
+            }
+          }}
+        />
       )}
       {modal?.kind === 'connections' && (
         <ConnectionsDialog

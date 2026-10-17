@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { notificationStateSchema } from './notifications.js';
 export const dateSchema = z
   .string()
   .regex(/^\d{4}-\d{2}-\d{2}$/)
@@ -30,6 +31,7 @@ export const accountSchema = z.object({
   type: z.enum(['checking', 'savings', 'credit', 'investment', 'loan', 'manual']),
   currency: z.string().length(3),
   balance: centsSchema.nullable(),
+  creditLimit: centsSchema.positive().nullable().optional(),
   includeInNetWorth: z.boolean().default(true),
   enabled: z.boolean().default(true),
   source: z.enum(['demo', 'manual', 'csv', 'plaid', 'bitcoin']),
@@ -63,6 +65,7 @@ export const editSchema = z.object({
   categoryId: z.string().optional(),
   kind: kindSchema.optional(),
   notes: z.string().max(5000).optional(),
+  recurring: z.string().max(160).optional(),
   excluded: z.boolean().optional(),
 });
 export const transactionSchema = z.object({
@@ -85,6 +88,9 @@ export const transactionSchema = z.object({
   pendingProviderId: z.string().nullable().optional(),
   connectionId: z.string().optional(),
   fingerprint: z.string().optional(),
+  importIdentity: z.string().max(1000).optional(),
+  recurring: z.string().max(160).optional(),
+  tags: z.string().max(1000).optional(),
   raw: z.record(z.string(), z.unknown()).optional(),
   edits: editSchema.default({}),
   splits: z.array(splitSchema).default([]),
@@ -158,6 +164,7 @@ export const stateSchema = z.object({
   rules: z.array(ruleSchema),
   investmentActivity: z.array(investmentActivitySchema),
   bitcoinMarket: bitcoinMarketSchema.optional(),
+  notifications: notificationStateSchema.optional(),
   settings: z.object({
     currency: z.string().length(3),
     includeExcludedCashflow: z.boolean(),

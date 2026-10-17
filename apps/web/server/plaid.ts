@@ -412,6 +412,9 @@ export function applyProviderRecords(
       normalized.splits = old.splits;
       normalized.notes = old.notes;
       normalized.excluded = old.excluded;
+      normalized.recurring = old.recurring;
+      normalized.tags = old.tags;
+      normalized.importIdentity = old.importIdentity;
       if (old.splits.length && old.amount !== normalized.amount) {
         normalized.raw = { ...raw, asset_split_conflict: true };
         normalized.amount = old.amount;
@@ -554,151 +557,161 @@ async function commitSync(
 ) {
   const id = c.id,
     owner = c.owner_id;
-  return mutateState(db, owner, async (s, tx) => {
-    const live = (
-      await tx.query<Connection>(
-        'SELECT * FROM connections WHERE id=$1 AND owner_id=$2 FOR UPDATE',
-        [id, owner],
+  return mutateState(
+    db,
+    owner,
+    async (s, tx) => {
+      const live = (
+        await tx.query<Connection>(
+          'SELECT * FROM connections WHERE id=$1 AND owner_id=$2 FOR UPDATE',
+          [id, owner],
+        )
+      ).rows[0];
+      if (!live) throw new PlaidError('SYNC_CONFLICT_RETRY');
+      if (lease) await requireLease(tx, id, lease.token);
+      if (
+        live.cursor !== c.cursor ||
+        live.environment !== c.environment ||
+        live.encrypted_token !== c.encrypted_token ||
+        JSON.stringify(live.selected_accounts) !== JSON.stringify(c.selected_accounts) ||
+        live.status === 'disconnected'
       )
-    ).rows[0];
-    if (!live) throw new PlaidError('SYNC_CONFLICT_RETRY');
-    if (lease) await requireLease(tx, id, lease.token);
-    if (
-      live.cursor !== c.cursor ||
-      live.environment !== c.environment ||
-      live.encrypted_token !== c.encrypted_token ||
-      JSON.stringify(live.selected_accounts) !== JSON.stringify(c.selected_accounts) ||
-      live.status === 'disconnected'
-    )
-      throw new PlaidError('SYNC_CONFLICT_RETRY');
-    for (const a of s.accounts.filter(
-      (a) =>
-        a.connectionId === id &&
-        !metadata.accounts.some((raw: any) => raw.account_id === a.providerId),
-    ))
-      a.enabled = false;
-    for (const raw of metadata.accounts) {
-      let a = s.accounts.find((a) => a.connectionId === id && a.providerId === raw.account_id);
-      const selected = c.selected_accounts.includes(raw.account_id);
-      if (!a && !selected) continue;
-      const value: Account = {
-        id: a?.id ?? randomUUID(),
-        name: a?.name ?? raw.name,
-        type: typeMap(raw),
-        currency: raw.balances.iso_currency_code ?? 'USD',
-        balance: minor(raw.balances.current),
-        includeInNetWorth: a?.includeInNetWorth ?? true,
-        enabled: selected,
-        source: 'plaid',
-        updatedAt: new Date().toISOString(),
-        mask: raw.mask ?? undefined,
-        connectionId: id,
-        providerId: raw.account_id,
-        coverageStart: a?.coverageStart,
-        coverageEnd: a?.coverageEnd,
-        coverageComplete: a?.coverageComplete ?? false,
-      };
-      if (a) Object.assign(a, value);
-      else {
-        s.accounts.push(value);
-        a = value;
-      }
-      if (a.balance !== null) {
-        s.snapshots = s.snapshots.filter((p) => p.accountId !== a!.id || p.date !== today());
-        s.snapshots.push({
-          id: randomUUID(),
-          accountId: a.id,
-          date: today(),
-          balance: a.balance,
-          currency: a.currency,
+        throw new PlaidError('SYNC_CONFLICT_RETRY');
+      for (const a of s.accounts.filter(
+        (a) =>
+          a.connectionId === id &&
+          !metadata.accounts.some((raw: any) => raw.account_id === a.providerId),
+      ))
+        a.enabled = false;
+      for (const raw of metadata.accounts) {
+        let a = s.accounts.find((a) => a.connectionId === id && a.providerId === raw.account_id);
+        const selected = c.selected_accounts.includes(raw.account_id);
+        if (!a && !selected) continue;
+        const value: Account = {
+          id: a?.id ?? randomUUID(),
+          name: a?.name ?? raw.name,
+          type: typeMap(raw),
+          currency: raw.balances.iso_currency_code ?? 'USD',
+          balance: minor(raw.balances.current),
+          creditLimit: raw.balances.limit > 0 ? minor(raw.balances.limit) : null,
+          includeInNetWorth: a?.includeInNetWorth ?? true,
+          enabled: selected,
           source: 'plaid',
-        });
-      }
-    }
-    if (batch) {
-      live.initial_complete ||= ['INITIAL_UPDATE_COMPLETE', 'HISTORICAL_UPDATE_COMPLETE'].includes(
-        batch.updateStatus ?? '',
-      );
-      live.historical_complete ||= batch.updateStatus === 'HISTORICAL_UPDATE_COMPLETE';
-      applyProviderRecords(s, live, batch);
-    }
-    if (investments) {
-      const accountIds = new Set(s.accounts.filter((a) => a.connectionId === id).map((a) => a.id));
-      s.holdings = s.holdings.filter((h) => !accountIds.has(h.accountId));
-      for (const h of investments.holdings) {
-        const a = s.accounts.find((a) => a.connectionId === id && a.providerId === h.account_id);
-        if (!a) continue;
-        const security = investments.securities.find((x: any) => x.security_id === h.security_id);
-        s.holdings.push({
-          id: `${a.id}:${h.security_id}`,
-          accountId: a.id,
-          symbol: security?.ticker_symbol ?? '—',
-          name: security?.name ?? 'Unsupported security',
-          quantity: String(h.quantity ?? 0),
-          price: minor(h.institution_price ?? security?.close_price),
-          marketValue: minor(h.institution_value),
-          costBasis: minor(h.cost_basis),
-          currency: h.iso_currency_code ?? a.currency,
-          priceAt: h.institution_price_as_of ?? security?.close_price_as_of ?? null,
-          type: security?.type ?? 'Other',
-          providerId: h.security_id,
-          source: 'plaid',
-        });
-      }
-      s.holdingSnapshots = s.holdingSnapshots.filter(
-        (h) => !accountIds.has(h.accountId) || h.date !== today(),
-      );
-      s.holdingSnapshots.push(
-        ...s.holdings
-          .filter((h) => accountIds.has(h.accountId))
-          .map((h) => ({ ...h, id: randomUUID(), holdingId: h.id, date: today() })),
-      );
-      s.investmentActivity = s.investmentActivity.filter((a) => !accountIds.has(a.accountId));
-      for (const t of activity) {
-        const a = s.accounts.find((a) => a.connectionId === id && a.providerId === t.account_id);
-        if (a)
-          s.investmentActivity.push({
-            id: t.investment_transaction_id,
+          updatedAt: new Date().toISOString(),
+          mask: raw.mask ?? undefined,
+          connectionId: id,
+          providerId: raw.account_id,
+          coverageStart: a?.coverageStart,
+          coverageEnd: a?.coverageEnd,
+          coverageComplete: a?.coverageComplete ?? false,
+        };
+        if (a) Object.assign(a, value);
+        else {
+          s.accounts.push(value);
+          a = value;
+        }
+        if (a.balance !== null) {
+          s.snapshots = s.snapshots.filter((p) => p.accountId !== a!.id || p.date !== today());
+          s.snapshots.push({
+            id: randomUUID(),
             accountId: a.id,
-            date: t.date,
-            type: t.type,
-            amount: minor(t.amount) ?? 0,
-            currency: t.iso_currency_code ?? a.currency,
-            name: t.name,
-            securityId: t.security_id ?? null,
-            quantity: String(t.quantity ?? 0),
+            date: today(),
+            balance: a.balance,
+            currency: a.currency,
             source: 'plaid',
           });
+        }
       }
-    }
-    const status =
-      c.product === 'investments' || live.historical_complete
-        ? 'healthy'
-        : live.initial_complete
-          ? 'historical_loading'
-          : 'initial_loading';
-    await tx.query(
-      'UPDATE connections SET cursor=$1,status=$2,last_synced_at=now(),error_code=NULL,initial_complete=$5,historical_complete=$6 WHERE id=$3 AND owner_id=$4',
-      [
-        batch?.cursor ?? c.cursor,
-        status,
-        id,
-        owner,
-        live.initial_complete,
-        live.historical_complete,
-      ],
-    );
-    if (lease) {
+      if (batch) {
+        live.initial_complete ||= [
+          'INITIAL_UPDATE_COMPLETE',
+          'HISTORICAL_UPDATE_COMPLETE',
+        ].includes(batch.updateStatus ?? '');
+        live.historical_complete ||= batch.updateStatus === 'HISTORICAL_UPDATE_COMPLETE';
+        applyProviderRecords(s, live, batch);
+      }
+      if (investments) {
+        const accountIds = new Set(
+          s.accounts.filter((a) => a.connectionId === id).map((a) => a.id),
+        );
+        s.holdings = s.holdings.filter((h) => !accountIds.has(h.accountId));
+        for (const h of investments.holdings) {
+          const a = s.accounts.find((a) => a.connectionId === id && a.providerId === h.account_id);
+          if (!a) continue;
+          const security = investments.securities.find((x: any) => x.security_id === h.security_id);
+          s.holdings.push({
+            id: `${a.id}:${h.security_id}`,
+            accountId: a.id,
+            symbol: security?.ticker_symbol ?? '—',
+            name: security?.name ?? 'Unsupported security',
+            quantity: String(h.quantity ?? 0),
+            price: minor(h.institution_price ?? security?.close_price),
+            marketValue: minor(h.institution_value),
+            costBasis: minor(h.cost_basis),
+            currency: h.iso_currency_code ?? a.currency,
+            priceAt: h.institution_price_as_of ?? security?.close_price_as_of ?? null,
+            type: security?.type ?? 'Other',
+            providerId: h.security_id,
+            source: 'plaid',
+          });
+        }
+        s.holdingSnapshots = s.holdingSnapshots.filter(
+          (h) => !accountIds.has(h.accountId) || h.date !== today(),
+        );
+        s.holdingSnapshots.push(
+          ...s.holdings
+            .filter((h) => accountIds.has(h.accountId))
+            .map((h) => ({ ...h, id: randomUUID(), holdingId: h.id, date: today() })),
+        );
+        s.investmentActivity = s.investmentActivity.filter((a) => !accountIds.has(a.accountId));
+        for (const t of activity) {
+          const a = s.accounts.find((a) => a.connectionId === id && a.providerId === t.account_id);
+          if (a)
+            s.investmentActivity.push({
+              id: t.investment_transaction_id,
+              accountId: a.id,
+              date: t.date,
+              type: t.type,
+              amount: minor(t.amount) ?? 0,
+              currency: t.iso_currency_code ?? a.currency,
+              name: t.name,
+              securityId: t.security_id ?? null,
+              quantity: String(t.quantity ?? 0),
+              source: 'plaid',
+            });
+        }
+      }
+      const status =
+        c.product === 'investments' || live.historical_complete
+          ? 'healthy'
+          : live.initial_complete
+            ? 'historical_loading'
+            : 'initial_loading';
       await tx.query(
-        `UPDATE sync_jobs SET completed_generation=$1,
+        'UPDATE connections SET cursor=$1,status=$2,last_synced_at=now(),error_code=NULL,initial_complete=$5,historical_complete=$6 WHERE id=$3 AND owner_id=$4',
+        [
+          batch?.cursor ?? c.cursor,
+          status,
+          id,
+          owner,
+          live.initial_complete,
+          live.historical_complete,
+        ],
+      );
+      if (lease) {
+        await tx.query(
+          `UPDATE sync_jobs SET completed_generation=$1,
             status=CASE WHEN generation>$1 THEN 'pending' ELSE 'done' END,
             available_at=now(),lease_token=NULL,lease_until=NULL,stage=NULL,attempts=0,
             last_error=NULL,updated_at=now() WHERE connection_id=$2 AND lease_token=$3`,
-        [lease.generation, id, lease.token],
-      );
-    }
-    return s;
-  });
+          [lease.generation, id, lease.token],
+        );
+      }
+      return s;
+    },
+    undefined,
+    !c.historical_complete,
+  );
 }
 
 const jwkCache = new Map<string, { key: JWK; at: number }>();

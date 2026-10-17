@@ -6,6 +6,8 @@ import { readFile, readdir, mkdir } from 'node:fs/promises';
 import { checkServerIdentity } from 'node:tls';
 import { validateState, type State } from '../shared/core.js';
 import { assertHostedPayloadSize } from './hosting.js';
+import { updateNotifications } from '../shared/notifications.js';
+import { enqueueNotifications } from './notifications.js';
 export interface SQL {
   query<T = any>(sql: string, params?: unknown[]): Promise<{ rows: T[] }>;
 }
@@ -154,6 +156,7 @@ export async function mutateState(
   owner: string,
   fn: (state: State, tx: SQL) => Promise<State> | State,
   revision?: number,
+  quiet = false,
 ) {
   return db.transaction(async (tx) => {
     const r = await tx.query<{ state: State; revision: number }>(
@@ -166,8 +169,17 @@ export async function mutateState(
       throw Object.assign(Error('Data changed on another device. Reload and try again.'), {
         status: 409,
       });
-    const next = validateState(await fn(validateState(row.state), tx));
+    const before = validateState(row.state);
+    const next = validateState(
+      updateNotifications(
+        before,
+        await fn(validateState(row.state), tx),
+        new Date().toISOString(),
+        quiet,
+      ),
+    );
     assertHostedPayloadSize(next);
+    await enqueueNotifications(tx, owner, before, next);
     await tx.query(
       'UPDATE workspaces SET state=$1,revision=revision+1,updated_at=now() WHERE owner_id=$2',
       [JSON.stringify(next), owner],
