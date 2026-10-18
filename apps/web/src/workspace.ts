@@ -148,7 +148,7 @@ export class Workspace {
     } catch (e: any) {
       if (generation !== this.generation) return;
       this.conflict = e.status === 409 || (e.status === 400 && this.doc.pending.length > 0);
-      this.status = this.conflict ? e.message : e.status === 401
+      this.status = this.conflict ? e.message : !this.doc.owner ? 'Saved on this device' : e.status === 401
         ? this.doc.owner ? 'Saved here · sign in to sync' : 'Saved on this device'
         : 'Saved here · sync paused';
       if (e.status === 401) this.metadata = {};

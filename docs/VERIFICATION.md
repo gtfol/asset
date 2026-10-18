@@ -1,5 +1,15 @@
 # Verification record
 
+## October 18: local workspaces and legal pages
+
+Both apps open into an empty workspace without a demo or sign-in gate. Web edits persist in IndexedDB; iOS uses an atomic, protected workspace file. Optional Google sync adds local records to the existing account and queues later edits with owner checks, conflict detection, and idempotent retries. Browser tabs serialize local writes. Import timestamps and holding snapshot dates remain stable through delayed retries. Old native synced caches require one successful connection before editing after migration.
+
+185 web tests pass with two workers, including storage failures, concurrent tabs, offline edits, owner isolation, merge, conflict, and lost-response retries. The initial unrestricted parallel run timed out under simultaneous Xcode compilation; the bounded run passed all tests. TypeScript/Vite build, bundled native-resource check, 103 native checks, and Node/JavaScriptCore calculation parity pass. A production preview was stopped and the app still reopened with its locally saved synthetic account. Existing production records loaded after deployment. iPhone simulator startup and optional Settings sign-in were visually inspected; the real-device Google callback still needs a retry on the updated build.
+
+Asset's `/privacy` and `/terms` are published, with permanent redirects from the `.html` paths. The FinanceKit agreement and request were submitted to Apple as request **739VT6P73Z**; the entitlement is still pending and Apple account sync remains disabled. Signed iOS archive **0.1.0 (2)** is prepared. TestFlight upload currently requires restoring Xcode's missing Apple-account login token; build 1 is the existing TestFlight version.
+
+The sections below record earlier verification runs and their limits at the time.
+
 October 15–17, 2026. Web and native automated checks and builds were re-run October 16 after moving to the Capsule-style repository layout. Final native transaction interaction checks completed October 16 before the folder move. The web app and API are published at asset.gtfol.dev, with demo creation, Supabase persistence, and sign-out verified on the deployed app. The native app remains a local simulator build. All financial values in the screenshots and automated tests are synthetic. No private banks, paid services, or Plaid Production connections were accessed.
 
 ## Build and automated results
