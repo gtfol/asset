@@ -359,6 +359,49 @@ describe('Venmo receiving lifecycle', () => {
     await purgeVenmoReviewContent(db);
     expect((await inbox()).routes[0].verificationCode).toBeNull();
   });
+  it('supports Gmail link confirmations, encrypts them, and clears them on expiry or pause', async () => {
+    const link = 'https://mail-settings.google.com/mail/vf-%5Bfixture%5D-test';
+    mail.from = 'forwarding-noreply@google.com';
+    mail.subject = '(Gmail Forwarding Confirmation - Receive Mail from owner@example.invalid';
+    mail.text = `owner@example.invalid requested forwarding.\n${link}\nhttps://mail-settings.google.com/mail/uf-cancel`;
+    await webhook();
+    expect((await inbox()).routes[0]).toMatchObject({
+      verificationCode: null,
+      verificationUrl: link,
+    });
+    expect((await inbox(other)).routes).toEqual([]);
+    expect(JSON.stringify((await db.query('SELECT * FROM venmo_routes')).rows)).not.toContain(link);
+    await db.query("UPDATE venmo_routes SET verification_expires_at=now()-interval '1 hour'");
+    expect((await inbox()).routes[0].verificationUrl).toBeNull();
+    await purgeVenmoReviewContent(db);
+    expect(
+      (await db.query('SELECT verification_url FROM venmo_routes')).rows[0].verification_url,
+    ).toBeNull();
+    await webhook();
+    await request(`/venmo/${route.id}/pause`, {});
+    expect((await inbox()).routes[0].verificationUrl).toBeNull();
+  });
+  it('rejects untrusted Gmail confirmation links and unauthenticated messages', async () => {
+    mail.from = 'forwarding-noreply@google.com';
+    mail.subject = 'Gmail Forwarding Confirmation';
+    for (const link of [
+      'https://mail-settings.google.com.attacker.invalid/mail/vf-fixture',
+      'http://mail-settings.google.com/mail/vf-fixture',
+      'https://mail-settings.google.com/mail/uf-fixture',
+    ]) {
+      mail.text = `owner@example.invalid requested forwarding.\n${link}`;
+      await webhook();
+      expect((await inbox()).routes[0].verificationUrl).toBeNull();
+    }
+    mail.text = 'owner@example.invalid\nhttps://mail-settings.google.com/mail/vf-fixture';
+    mail.authentication = { dkim: 'fail' };
+    await webhook();
+    expect((await inbox()).routes[0].verificationUrl).toBeNull();
+    mail.authentication = { dkim: 'pass' };
+    mail.text = 'someone-else@example.invalid\nhttps://mail-settings.google.com/mail/vf-fixture';
+    await webhook();
+    expect((await inbox()).routes[0].verificationUrl).toBeNull();
+  });
   it('expires review content, pauses delivery, and rotates the address when resumed', async () => {
     mail.subject = 'Unrecognized receipt';
     await webhook();

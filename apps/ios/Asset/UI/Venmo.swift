@@ -34,10 +34,14 @@ struct VenmoConnectionView: View {
           if route.flag("active") {
             Text(route.text("address")).font(.footnote).textSelection(.enabled)
             Button("Copy forwarding address") { UIPasteboard.general.string = route.text("address") }
-            Text("1. In Gmail settings, open Forwarding and POP/IMAP and add this address.\n\n2. Return here and tap Refresh. Enter the confirmation code in Gmail.\n\n3. Create a filter for mail from venmo@venmo.com and forward matching messages to this address. Leave forwarding for all other mail off.")
+            Text("1. In Gmail settings, open Forwarding and POP/IMAP and add this address.\n\n2. Return here and tap Refresh. Open the Gmail confirmation link below, or enter the confirmation code in Gmail.\n\n3. Create a filter for mail from venmo@venmo.com and forward matching messages to this address. Leave forwarding for all other mail off.")
               .font(.subheadline)
             if !route.text("verificationCode").isEmpty {
               Text("Gmail confirmation code: \(route.text("verificationCode"))").textSelection(.enabled)
+            }
+            if let url = URL(string: route.text("verificationUrl")), url.scheme == "https",
+              url.host == "mail-settings.google.com", url.path.hasPrefix("/mail/vf-") {
+              Link("Confirm forwarding in Gmail", destination: url)
             }
             Text("Other email providers can use a forwarding rule for the same sender. Manually forward older receipts from your receipt email address for review.").font(.footnote)
             Text("Last received: \(route.text("lastReceivedAt", "not yet"))").font(.footnote)

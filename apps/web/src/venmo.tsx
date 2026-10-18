@@ -10,6 +10,7 @@ type Route = {
   address: string | null;
   active: boolean;
   verificationCode: string | null;
+  verificationUrl: string | null;
   lastReceivedAt: string | null;
 };
 type Receipt = {
@@ -146,7 +147,8 @@ export function VenmoConnection({
                           address.
                         </li>
                         <li>
-                          Return here and select Refresh. Enter the confirmation code in Gmail.
+                          Return here and select Refresh. Open the Gmail confirmation link below, or
+                          enter the confirmation code in Gmail.
                         </li>
                         <li>
                           Create a Gmail filter for mail from <strong>venmo@venmo.com</strong> and
@@ -157,6 +159,13 @@ export function VenmoConnection({
                       {r.verificationCode && (
                         <p role="status">
                           Gmail confirmation code: <strong>{r.verificationCode}</strong>
+                        </p>
+                      )}
+                      {r.verificationUrl && (
+                        <p>
+                          <a href={r.verificationUrl} target="_blank" rel="noopener noreferrer">
+                            Confirm forwarding in Gmail
+                          </a>
                         </p>
                       )}
                       <p className="tiny muted">

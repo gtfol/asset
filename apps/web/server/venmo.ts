@@ -191,10 +191,16 @@ export async function processVenmoEmail(
     text.toLowerCase().includes(route.source_email);
   if (confirmation) {
     const code = text.match(/confirmation code\s*:?\s*(\d{6,12})/i)?.[1];
-    if (code)
+    const link = text.match(/https:\/\/mail-settings\.google\.com\/mail\/vf-[^\s<>"']+/)?.[0];
+    if (code || link)
       await db.query(
-        "UPDATE venmo_routes SET verification_code=$1,verification_expires_at=now()+interval '1 hour' WHERE id=$2 AND active=true AND encrypted_token=$3",
-        [encryptToken(code), route.id, route.encrypted_token],
+        "UPDATE venmo_routes SET verification_code=$1,verification_url=$2,verification_expires_at=now()+interval '1 hour' WHERE id=$3 AND active=true AND encrypted_token=$4",
+        [
+          code ? encryptToken(code) : null,
+          link ? encryptToken(link) : null,
+          route.id,
+          route.encrypted_token,
+        ],
       );
     return;
   }
@@ -356,7 +362,7 @@ export async function purgeVenmoReviewContent(db: SQL) {
     "UPDATE venmo_receipts SET encrypted_payload=NULL,reason='Receipt preview expired. Add the transaction manually if needed.' WHERE encrypted_payload IS NOT NULL AND created_at<now()-interval '7 days'",
   );
   await db.query(
-    'UPDATE venmo_routes SET verification_code=NULL WHERE verification_expires_at<now()',
+    'UPDATE venmo_routes SET verification_code=NULL,verification_url=NULL WHERE verification_expires_at<now()',
   );
 }
 
@@ -389,6 +395,10 @@ export function venmoRoutes(db: Database) {
         verificationCode:
           r.verification_code && +new Date(r.verification_expires_at) > Date.now()
             ? decryptToken(r.verification_code)
+            : null,
+        verificationUrl:
+          r.active && r.verification_url && +new Date(r.verification_expires_at) > Date.now()
+            ? decryptToken(r.verification_url)
             : null,
         lastReceivedAt: r.last_received_at,
       })),
@@ -479,7 +489,7 @@ export function venmoRoutes(db: Database) {
         account.venmo = { bankTransfers: p.bankTransfers };
         await tx.query(
           `INSERT INTO venmo_routes(id,owner_id,account_id,source_email,token_hash,encrypted_token) VALUES($1,$2,$3,$4,$5,$6)
-        ON CONFLICT(owner_id,account_id) DO UPDATE SET source_email=$4,token_hash=$5,encrypted_token=$6,active=true,verification_code=NULL,verification_expires_at=NULL,created_at=now()`,
+        ON CONFLICT(owner_id,account_id) DO UPDATE SET source_email=$4,token_hash=$5,encrypted_token=$6,active=true,verification_code=NULL,verification_url=NULL,verification_expires_at=NULL,created_at=now()`,
           [id, owner, account.id, p.sourceEmail.toLowerCase(), hash(token), encryptToken(token)],
         );
         s.transactions = s.transactions.map((t) => venmoBankTransfer(t, s));
@@ -492,9 +502,10 @@ export function venmoRoutes(db: Database) {
   });
   router.post('/:id/pause', async (req, res) => {
     const route = await ownedRoute(db, req.params.id, res.locals.owner);
-    await db.query('UPDATE venmo_routes SET active=false,verification_code=NULL WHERE id=$1', [
-      route.id,
-    ]);
+    await db.query(
+      'UPDATE venmo_routes SET active=false,verification_code=NULL,verification_url=NULL WHERE id=$1',
+      [route.id],
+    );
     res.json({ ok: true });
   });
   router.post('/receipts/:id/ignore', async (req, res) => {
