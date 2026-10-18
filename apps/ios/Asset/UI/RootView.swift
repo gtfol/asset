@@ -1,13 +1,16 @@
 import SwiftUI
 
 struct RootView: View {
+  enum AddAction: String, Identifiable {
+    case transaction, account, bitcoin, holding, category
+    var id: String { rawValue }
+  }
   @EnvironmentObject var store: Store
   @Environment(\.scenePhase) var scenePhase
   @State var page = "Dashboard"
   @State var month = String(dateToday().prefix(7))
   @State var settings = false
-  @State var add = false
-  @State private var addAction = "transaction"
+  @State private var addAction: AddAction?
   @State var notifications = false
   let pages = ["Dashboard", "Transactions", "Accounts", "Investments", "Categories", "Cash Flow"]
   var body: some View {
@@ -74,11 +77,11 @@ struct RootView: View {
               }.quietBackground()
               ToolbarItem(placement: .topBarTrailing) {
                 Menu {
-                  Button("Add transaction") { create("transaction") }
-                  Button("Add account") { create("account") }
-                  Button("Add Bitcoin wallet") { create("bitcoin") }
-                  Button("Add holding") { create("holding") }
-                  Button("Add category") { create("category") }
+                  Button("Add transaction") { addAction = .transaction }
+                  Button("Add account") { addAction = .account }
+                  Button("Add Bitcoin wallet") { addAction = .bitcoin }
+                  Button("Add holding") { addAction = .holding }
+                  Button("Add category") { addAction = .category }
                 } label: {
                   Image(systemName: "plus")
                 }.accessibilityLabel("Add").tint(.assetText)
@@ -86,13 +89,13 @@ struct RootView: View {
             }
             .sheet(isPresented: $settings) { SettingsView() }
             .sheet(isPresented: $notifications) { NotificationInbox() }
-            .sheet(isPresented: $add) {
-              switch addAction {
-              case "account": AccountForm()
-              case "bitcoin": BitcoinWalletSetupView()
-              case "category": CategoryForm()
-              case "holding": HoldingForm()
-              default: TransactionSetupView()
+            .sheet(item: $addAction) { action in
+              switch action {
+              case .account: AccountForm()
+              case .bitcoin: BitcoinWalletSetupView()
+              case .category: CategoryForm()
+              case .holding: HoldingForm()
+              case .transaction: TransactionSetupView()
               }
             }
             .task { await store.refresh() }
@@ -116,10 +119,6 @@ struct RootView: View {
     } message: {
       Text(store.error)
     }
-  }
-  private func create(_ action: String) {
-    addAction = action
-    add = true
   }
 }
 struct DashboardView: View {
