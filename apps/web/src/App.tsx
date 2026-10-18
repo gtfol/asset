@@ -1,3 +1,5 @@
+import { Workspace } from './workspace';
+import { Modal } from './components';
 import { loanLenders } from '../shared/loans';
 import { DeviceVerification } from './device-verification';
 import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react';
@@ -116,6 +118,9 @@ export function App() {
   const [state, setState] = useState<State | null>(null),
     [revision, setRevision] = useState(0),
     [loading, setLoading] = useState(true),
+    [syncStatus, setSyncStatus] = useState('Saved on this device'),
+    [syncConflict, setSyncConflict] = useState(false),
+    [signedIn, setSignedIn] = useState(false),
     [page, setPage] = useState('Dashboard'),
     [month, setMonth] = useState(today().slice(0, 7)),
     [modal, setModal] = useState<{ kind: string; id?: string } | null>(null),
@@ -136,45 +141,35 @@ export function App() {
   const latestState = useRef(state);
   latestState.current = state;
   const [bitcoinError, setBitcoinError] = useState('');
+  const workspace = useRef<Workspace | null>(null);
+  if (!workspace.current) workspace.current = new Workspace(api, () => {
+    const w = workspace.current!;
+    if (!w.doc) return;
+    setState(w.doc.state); setRevision(w.doc.revision); revisionRef.current = w.doc.revision;
+    setSignedIn(!!w.doc.owner); setSyncStatus(w.status); setSyncConflict(w.conflict);
+    setConnections(w.metadata.connections ?? []); setConfigured(w.metadata.plaidConfigured ?? false);
+    setSessionId(w.metadata.sessionId ?? '');
+  });
+  const initialization = useRef<Promise<void> | null>(null);
   const load = useCallback(async () => {
-    const generation = sessionGeneration.current;
     try {
-      const r = await api('/state');
-      setVerificationRequired(false);
-      if (generation !== sessionGeneration.current) return;
-      if (r.revision < revisionRef.current) return;
-      if (revisionRef.current === 0) setMonth(today(r.state.settings.timezone).slice(0, 7));
-      setState(r.state);
-      setRevision(r.revision);
-      revisionRef.current = r.revision;
-      setConnections(r.connections);
-      setConfigured(r.plaidConfigured);
-      setSessionId(r.sessionId ?? '');
-    } catch (e: any) {
-      if (generation === sessionGeneration.current && e.status !== 401) setError(e.message);
-      if (generation === sessionGeneration.current && e.status === 401) {
-        clearPlaidAttempt();
-        if (window.location.pathname === '/plaid/oauth') {
-          window.history.replaceState(null, '', '/');
-          setPlaidReturn(undefined);
-          setError('Sign in again, then restart your bank connection.');
-        }
-      }
-    } finally {
-      if (generation === sessionGeneration.current) setLoading(false);
-    }
+      if (!initialization.current) initialization.current = workspace.current!.open();
+      await initialization.current; setLoading(false); await workspace.current!.sync();
+    } catch (e: any) { setError(e.message); setLoading(false); }
   }, []);
+  const signIn = async () => {
+    try { clearPlaidAttempt(); const { url } = await api('/auth/google/start', {}); window.location.assign(url); }
+    catch (e: any) { setError(e.message); }
+  };
   const bitcoinRequest: BitcoinRequest = useCallback(
     async (path, body = {}) => {
       const generation = sessionGeneration.current;
+      await workspace.current!.sync();
+      if (!workspace.current!.doc.owner || workspace.current!.doc.pending.length)
+        throw Error('Sign in and finish syncing saved changes before connecting an account.');
       const r = await api(path, body, 'POST', sessionId);
-      if (generation !== sessionGeneration.current)
-        throw Error('Workspace changed during Bitcoin sync');
-      if (r.revision >= revisionRef.current) {
-        setState(r.state);
-        setRevision(r.revision);
-        revisionRef.current = r.revision;
-      }
+      if (generation !== sessionGeneration.current) throw Error('Workspace changed during Bitcoin sync');
+      await workspace.current!.accept(r);
     },
     [sessionId],
   );
@@ -230,27 +225,15 @@ export function App() {
       setModal({ kind: 'connections' });
     }
   }, [state, plaidReturn]);
-  const run: Run = useCallback(
-    async (command: Command) => {
-      const generation = sessionGeneration.current;
-      try {
-        const r = await api('/command', { ...command, revision: revisionRef.current });
-        if (generation !== sessionGeneration.current) throw Error('Workspace changed while saving');
-        if (r.revision >= revisionRef.current) {
-          setState(r.state);
-          setRevision(r.revision);
-          revisionRef.current = r.revision;
-        }
-        setNotice('Changes saved');
-      } catch (e: any) {
-        if (generation !== sessionGeneration.current) throw e;
-        setError(e.message);
-        if (e.status === 409) await load();
-        throw e;
-      }
-    },
-    [load],
-  );
+  const run: Run = useCallback(async (command: Command) => {
+    try { await workspace.current!.command(command); setNotice('Changes saved'); }
+    catch (e: any) { setError(e.message); throw e; }
+  }, []);
+  useEffect(() => {
+    const wake = () => { if (document.visibilityState === 'visible') void load(); };
+    window.addEventListener('online', wake); document.addEventListener('visibilitychange', wake);
+    return () => { window.removeEventListener('online', wake); document.removeEventListener('visibilitychange', wake); };
+  }, [load]);
   const navigate = (name: string) => {
     setPage(name);
     window.scrollTo({ top: 0, behavior: 'instant' });
@@ -289,8 +272,7 @@ export function App() {
         <p>Opening your workspace…</p>
       </div>
     );
-  if (verificationRequired) return <DeviceVerification onReady={load} />;
-  if (!state) return <Welcome onReady={load} message={error} />;
+  if (!state) return <div className="boot"><p role="alert">{error || 'Opening your saved data…'}</p><button className="border-button" onClick={() => window.location.reload()}>Try again</button></div>;
   const d = dashboardView?.data,
     worth = dashboardView?.worth,
     currency = state.settings.currency;
@@ -360,32 +342,14 @@ export function App() {
             Settings & data
           </button>
           <div className="workspace-label">
-            <span className="avatar">{state.settings.demo ? 'D' : 'A'}</span>
+            <span className="avatar">A</span>
             <span>
-              {state.settings.demo ? 'Demo workspace' : 'My workspace'}
+              My workspace
               <small>
-                {state.settings.demo ? 'Synthetic data only' : 'Saved to this Asset server'}
+                {syncStatus}
               </small>
             </span>
-            <button
-              className="icon-button"
-              aria-label="Sign out"
-              onClick={async () => {
-                await api('/auth/logout', {});
-                sessionGeneration.current += 1;
-                clearPlaidAttempt();
-                revisionRef.current = 0;
-                setSessionId('');
-                setPlaidReturn(undefined);
-                setState(null);
-                setSelected(null);
-                setModal(null);
-                setNotice('');
-                setError('');
-              }}
-            >
-              <LogOut size={15} />
-            </button>
+            <button className="icon-button" aria-label="Sync settings" onClick={() => setModal({ kind: 'sync' })}><Link2 size={15} /></button>
           </div>
         </div>
       </aside>
@@ -410,11 +374,6 @@ export function App() {
                 <span className="notification-dot" />
               )}
             </button>
-            {state.settings.demo && (
-              <span className="demo-pill" title="Synthetic data">
-                Demo
-              </span>
-            )}
             <button
               className="quiet"
               aria-label="Import CSV"
@@ -426,7 +385,7 @@ export function App() {
             <button
               className="primary small"
               aria-label={
-                page === 'Accounts'
+                (page === 'Accounts' || !state.accounts.length)
                   ? 'Add account'
                   : page === 'Categories'
                     ? 'Add category'
@@ -437,7 +396,7 @@ export function App() {
               onClick={() =>
                 setModal({
                   kind:
-                    page === 'Accounts'
+                    (page === 'Accounts' || !state.accounts.length)
                       ? 'account'
                       : page === 'Categories'
                         ? 'category'
@@ -449,7 +408,7 @@ export function App() {
             >
               <Plus size={16} />
               <span>
-                {page === 'Accounts'
+                {(page === 'Accounts' || !state.accounts.length)
                   ? 'Account'
                   : page === 'Categories'
                     ? 'Category'
@@ -472,7 +431,18 @@ export function App() {
             {notice}
           </div>
         )}
-        {page === 'Dashboard' && d && worth && (
+        {page === 'Dashboard' && !state.accounts.length && (
+          <div className="content workspace-empty">
+            <h2>Your finances, in one place.</h2>
+            <p className="muted">Add an account or import your transactions to get started.</p>
+            <div className="button-row">
+              <button className="primary" onClick={() => setModal({ kind: 'account' })}>Add an account</button>
+              <button className="border-button" onClick={() => setModal({ kind: 'import' })}>Import transactions</button>
+            </div>
+            <p className="tiny muted">Saved on this device. Sync anytime from Settings.</p>
+          </div>
+        )}
+        {page === 'Dashboard' && !!state.accounts.length && d && worth && (
           <div className="content">
             <div className="page-heading">
               <div></div>
@@ -756,7 +726,7 @@ export function App() {
         <ImportDialog state={state} run={run} onClose={() => setModal(null)} />
       )}
       {modal?.kind === 'settings' && (
-        <SettingsDialog state={state} run={run} onClose={() => setModal(null)} />
+        <SettingsDialog state={state} run={run} sync={<button className="border-button" onClick={() => setModal({ kind: 'sync' })}>{signedIn ? 'Sync settings' : 'Sign in to sync'}</button>} onClose={() => setModal(null)} />
       )}
       {modal?.kind === 'notifications' && (
         <NotificationsDialog
@@ -775,7 +745,7 @@ export function App() {
           }}
         />
       )}
-      {modal?.kind === 'connections' && (
+      {modal?.kind === 'connections' && sessionId && (
         <ConnectionsDialog
           key={sessionId}
           state={state}
@@ -791,60 +761,29 @@ export function App() {
           }}
         />
       )}
-    </div>
-  );
-}
-function Welcome({ onReady, message = '' }: { onReady: () => Promise<void>; message?: string }) {
-  const [error, setError] = useState(
-      () =>
-        message ||
-        (new URLSearchParams(window.location.search).has('auth_error')
-          ? 'Google sign-in was not completed. Please try again.'
-          : ''),
-    ),
-    [busy, setBusy] = useState(false);
-  useEffect(() => {
-    if (new URLSearchParams(window.location.search).has('auth_error'))
-      window.history.replaceState(null, '', window.location.pathname);
-  }, []);
-  async function go(google: boolean) {
-    clearPlaidAttempt();
-    setBusy(true);
-    setError('');
-    try {
-      if (google) {
-        const { url } = await api('/auth/google/start', {});
-        window.location.assign(url);
-      } else {
-        await api('/auth/demo', {});
-        await onReady();
-      }
-    } catch (e: any) {
-      setError(e.message);
-    } finally {
-      setBusy(false);
-    }
-  }
-  return (
-    <div className="welcome">
-      <div className="welcome-card">
-        <h1 className="brand">asset</h1>
-        <p>Track spending, budgets, accounts, and investments.</p>
-        <button className="primary full" disabled={busy} onClick={() => void go(true)}>
-          {busy ? 'Opening…' : 'Continue with Google'}
-        </button>
-        <p className="tiny muted">Your private workspace, across your devices.</p>
-        <div className="divider" />
-        <button className="border-button full" disabled={busy} onClick={() => void go(false)}>
-          Explore the demo
-        </button>
-        <p className="tiny muted">Sample data. No bank connection needed.</p>
-        {error && (
-          <p role="alert" className="negative">
-            {error}
-          </p>
-        )}
-      </div>
+      {verificationRequired && <Modal title="Verify this device" onClose={() => setVerificationRequired(false)}>
+        <DeviceVerification onReady={async () => { setVerificationRequired(false); await load(); }} />
+      </Modal>}
+      {(modal?.kind === 'sync' || (modal?.kind === 'connections' && !sessionId)) && (
+        <Modal title={modal.kind === 'connections' ? 'Connect your accounts' : 'Sync'} onClose={() => setModal(null)}>
+          <p className="muted">{signedIn ? syncStatus : 'Your changes are saved on this device. Sign in to sync across devices and connect bank accounts.'}</p>
+          {!sessionId && <button className="primary" onClick={() => void signIn()}>Continue with Google</button>}
+          {sessionId && <div className="button-row">
+            <button className="border-button" onClick={() => void load()}>Sync now</button>
+            <button className="border-button" onClick={async () => {
+              try { await workspace.current!.signOut(); sessionGeneration.current++; clearPlaidAttempt(); setModal(null); setSelected(null); }
+              catch (e: any) { setError(e.message); }
+            }}>Sign out</button>
+          </div>}
+          {syncConflict && <section>
+            <p>Your edits are saved here. Export a backup in Settings before choosing the synced version.</p>
+            <button className="border-button" onClick={async () => {
+              if (!window.confirm('Use the synced version? Your local version will be kept as a recovery copy on this device.')) return;
+              try { await workspace.current!.useSyncedChanges(); } catch (e: any) { setError(e.message); }
+            }}>Use synced version</button>
+          </section>}
+        </Modal>
+      )}
     </div>
   );
 }

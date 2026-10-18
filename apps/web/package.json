@@ -8,7 +8,7 @@
   },
   "scripts": {
     "dev": "tsx watch server/index.ts",
-    "build": "tsc --noEmit && vite build",
+    "build": "tsc --noEmit && vite build && node scripts/offline.mjs",
     "start": "NODE_ENV=production tsx server/index.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",

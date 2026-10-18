@@ -43,6 +43,16 @@ extension Color {
       })
   }
 }
+struct AssetBorderButtonStyle: ButtonStyle {
+  @Environment(\.isEnabled) var isEnabled
+  func makeBody(configuration: Configuration) -> some View {
+    configuration.label.padding(.horizontal, 16).frame(minHeight: 44)
+      .foregroundStyle(Color.assetText)
+      .background(configuration.isPressed ? Color.assetDivider : Color.clear)
+      .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color.assetDivider, lineWidth: 1))
+      .contentShape(Rectangle()).opacity(isEnabled ? 1 : 0.5)
+  }
+}
 struct Card<Content: View>: View {
   var title: String = ""
   @ViewBuilder var content: Content

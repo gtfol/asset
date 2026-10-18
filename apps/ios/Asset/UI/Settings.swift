@@ -13,26 +13,25 @@ struct SharedFile: Identifiable {
   let id = UUID()
   let url: URL
 }
-struct ServerLoginView: View {
+struct SyncSignInView: View {
   @EnvironmentObject var store: Store
   @SwiftUI.Environment(\.dismiss) var dismiss
   @StateObject private var authentication = GoogleAuthentication()
   @State private var signInTask: Task<Void, Never>?
-  @State var server = GoogleSignIn.defaultServer
   @State var error = ""
   @State var busy = false
   var body: some View {
     NavigationStack {
-      List {
-        Section {
-          Text("Sign in to sync your workspace across devices.")
+      VStack(alignment: .leading, spacing: 20) {
+        Group {
+          Text("Sign in to sync across your devices. Your local changes will be kept.")
             .foregroundStyle(Color.assetSecondary)
           Button(busy ? "Signing in…" : "Continue with Google") {
             busy = true
             error = ""
             signInTask = Task {
               do {
-                try await store.signInWithGoogle(server: server) { url in
+                try await store.signInWithGoogle(server: GoogleSignIn.defaultServer) { url in
                   try await authentication.authenticate(url)
                 }
                 dismiss()
@@ -42,19 +41,11 @@ struct ServerLoginView: View {
               }
               busy = false
             }
-          }.frame(minHeight: 44).disabled(busy)
-        }
-        Section {
-          DisclosureGroup("Server") {
-            TextField("HTTPS server address", text: $server).textInputAutocapitalization(.never)
-              .autocorrectionDisabled().keyboardType(.URL).disabled(busy)
-            Text("Use asset.gtfol.dev, or enter your own Asset server address.")
-              .font(.custom("Lato-Regular", size: 13, relativeTo: .caption))
-              .foregroundStyle(Color.assetSecondary)
-          }
+          }.buttonStyle(AssetBorderButtonStyle()).disabled(busy)
         }
         if !error.isEmpty { Text(error).foregroundStyle(Color.assetError) }
-      }.assetTitle("Connect your workspace").toolbar {
+        Spacer()
+      }.padding(20).frame(maxWidth: .infinity, alignment: .leading).background(Color.assetBackground).assetTitle("Sync").toolbar {
         ToolbarItem(placement: .cancellationAction) {
           Button("Cancel") {
             signInTask?.cancel()
@@ -64,7 +55,6 @@ struct ServerLoginView: View {
         }
         .quietBackground()
       }
-      .onAppear { server = store.baseURL }
       .onDisappear {
         signInTask?.cancel()
         authentication.cancel()
@@ -80,15 +70,16 @@ struct SettingsView: View {
   @State var restorePicker = false
   @State var restore: JSON?
   @State var confirm = ""
+  @State private var signIn = false
+  @State private var resolveSync = false
   var body: some View {
     NavigationStack {
       List {
         Section {
-          LabeledContent(
-            "Workspace",
-            value: store.isDemo
-              ? "Synthetic demo"
-              : store.mode == "remote" ? "Shared server" : "Private · this device")
+          Text(store.syncStatus).foregroundStyle(Color.assetSecondary)
+          Button(store.mode == "remote" ? "Sign in again" : "Sign in to sync") { signIn = true }
+          if store.mode == "remote" { Button("Sync now") { Task { await store.refresh() } } }
+          if store.syncConflict { Button("Use synced version") { resolveSync = true } }
         }
         Section("Your data") {
           NavigationLink("Import CSV") { ImportView() }
@@ -170,6 +161,8 @@ struct SettingsView: View {
         }
         Section {
           NavigationLink("Connections") { ConnectionsView() }
+          Link("Privacy", destination: URL(string: "https://asset.gtfol.dev/privacy")!)
+          Link("Terms", destination: URL(string: "https://asset.gtfol.dev/terms")!)
           NavigationLink("Third-party licenses") {
             ScrollView {
               Text(
@@ -181,14 +174,14 @@ struct SettingsView: View {
               .padding()
             }.assetTitle("Licenses")
           }
-          Button("Sign out") {
-            store.signOut()
-            dismiss()
-          }
+          if store.mode == "remote" { Button("Sign out") { store.signOut(); if store.mode != "remote" { dismiss() } } }
         }
       }.assetTitle("Settings & data").toolbar {
         ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
           .quietBackground()
+      }.sheet(isPresented: $signIn) { SyncSignInView().presentationDetents([.medium, .large]) }
+      .confirmationDialog("Use the synced version? A recovery copy of your local changes will be saved on this device.", isPresented: $resolveSync) {
+        Button("Use synced version", role: .destructive) { Task { do { try await store.useSyncedChanges() } catch { store.error = error.localizedDescription } } }
       }.sheet(
         item: $share
       ) { ShareSheet(url: $0.url) }.fileImporter(
@@ -708,7 +701,7 @@ struct ConnectionsView: View {
       }
       if !remote {
         Text(
-          "Sign in to connect your accounts. Local accounts and CSV work without a server."
+          "Sign in from Settings to connect bank accounts. You can add accounts and import transactions anytime."
         )
       } else {
         Section { NavigationLink("Apple accounts") { AppleAccountsView() }.disabled(locked) }

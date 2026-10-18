@@ -165,8 +165,8 @@ enum GoogleSignIn {
 
   static func callbackCode(from url: URL) throws -> String {
     guard let parts = URLComponents(url: url, resolvingAgainstBaseURL: false),
-      parts.scheme == callbackScheme, parts.host == "auth", parts.path == "/callback",
-      parts.user == nil, parts.password == nil, parts.port == nil, parts.fragment == nil
+      parts.scheme?.lowercased() == callbackScheme, parts.host?.lowercased() == "auth", parts.path == "/callback",
+      parts.user == nil, parts.password == nil, parts.port == nil, (parts.fragment ?? "").isEmpty
     else { throw failure("Google sign-in returned an invalid response. Please try again.") }
     let items = parts.queryItems ?? []
     guard !items.contains(where: { $0.name == "error" }) else {
@@ -326,6 +326,13 @@ enum SessionKey {
   @Published var connections: [Row] = []
   @Published var configured = false
   @Published var revision = 0
+  @Published var syncStatus = "Saved on this device"
+  @Published var syncConflict = false
+  private var document: JSON = [:]
+  private var syncing = false
+  private let storageDirectory: URL?
+  var pendingCount: Int { (document["pending"] as? [JSON] ?? []).count }
+  var owner: String? { document["owner"] as? String }
   let engine = Engine()
   private(set) var workspaceGeneration = 0
   private let session: URLSession = {
@@ -377,28 +384,63 @@ enum SessionKey {
     cachedTransactions = rows
     return rows
   }
-  init() {
-    mode = UserDefaults.standard.string(forKey: "mode") ?? ""
-    if mode == "remote" && SessionKey.read() == nil { mode = "" }
-    if !mode.isEmpty {
-      do {
-        state =
-          try JSONSerialization.jsonObject(with: Data(contentsOf: fileURL(mode))) as? JSON ?? [:]
-        _ = try engine.call("validateState", [state])
-      } catch {
-        self.error =
-          "Saved data could not be opened. It has been preserved. \(error.localizedDescription)"
-        mode = ""
+  init(directory: URL? = nil) {
+    storageDirectory = directory
+    do {
+      let url = try fileURL("workspace")
+      if FileManager.default.fileExists(atPath: url.path) {
+        document = try engine.call("validateLocalWorkspace", [JSONSerialization.jsonObject(with: Data(contentsOf: url))]) as? JSON ?? [:]
+      } else {
+        document = try engine.call("createLocalWorkspace", [uid()]) as? JSON ?? [:]
+        let oldMode = directory == nil ? UserDefaults.standard.string(forKey: "mode") ?? "private" : "private"
+        if oldMode == "private" || oldMode == "remote" {
+          let legacy = try fileURL(oldMode)
+          if FileManager.default.fileExists(atPath: legacy.path) {
+            let oldState = try engine.call("validateState", [JSONSerialization.jsonObject(with: Data(contentsOf: legacy))]) as? JSON ?? [:]
+            if !Row(oldState).object("settings").flag("demo") {
+              document["state"] = oldState
+              if oldMode == "remote" { document["owner"] = "legacy" }
+            }
+          }
+        }
+        try persistDocument(document)
       }
+      publishDocument()
+      if directory == nil, SessionKey.read() != nil, UserDefaults.standard.string(forKey: "mode") == "remote" { mode = "remote" }
+    } catch {
+      self.error = "Saved data could not be opened. It has been preserved. \(error.localizedDescription)"
     }
   }
+  private func publishDocument() {
+    state = document["state"] as? JSON ?? [:]
+    revision = document["revision"] as? Int ?? 0
+    mode = owner == nil ? "private" : "remote"
+  }
+  private func persistDocument(_ next: JSON) throws {
+    let data = try JSONSerialization.data(withJSONObject: next, options: [.sortedKeys])
+    #if os(iOS)
+      try data.write(to: fileURL("workspace"), options: [.atomic, .completeFileProtection])
+    #else
+      try data.write(to: fileURL("workspace"), options: .atomic)
+    #endif
+    document = next
+  }
+  private func receive(_ result: JSON, acknowledged: String? = nil) throws {
+    let args: [Any] = acknowledged.map { [document, result, $0] } ?? [document, result]
+    let next = try engine.call("receiveWorkspace", args) as? JSON ?? [:]
+    try persistDocument(next)
+    publishDocument()
+  }
   func fileURL(_ name: String) throws -> URL {
-    let dir = try FileManager.default.url(
+    let dir = try storageDirectory ?? FileManager.default.url(
       for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true
     ).appendingPathComponent("Asset", isDirectory: true)
-    try FileManager.default.createDirectory(
-      at: dir, withIntermediateDirectories: true,
-      attributes: [.protectionKey: FileProtectionType.complete])
+    #if os(iOS)
+      try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true,
+        attributes: [.protectionKey: FileProtectionType.complete])
+    #else
+      try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    #endif
     var url = dir
     var values = URLResourceValues()
     values.isExcludedFromBackup = true
@@ -406,29 +448,11 @@ enum SessionKey {
     return dir.appendingPathComponent(name + ".json")
   }
   func persist(_ next: JSON, workspace: String? = nil) throws {
-    let data = try JSONSerialization.data(withJSONObject: next, options: [.sortedKeys])
-    try data.write(to: fileURL(workspace ?? mode), options: [.atomic, .completeFileProtection])
-  }
-  func openLocal(demo: Bool) {
-    workspaceGeneration += 1
-    do {
-      mode = demo ? "demo" : "private"
-      let url = try fileURL(mode)
-      if FileManager.default.fileExists(atPath: url.path) {
-        state = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? JSON ?? [:]
-        _ = try engine.call("validateState", [state])
-      } else {
-        state = try engine.call(demo ? "createDemo" : "emptyState") as? JSON ?? [:]
-        if !demo { state["categories"] = (try engine.call("createDemo") as? JSON)?["categories"] }
-        try persist(state)
-      }
-      connections = []
-      configured = false
-      revision = 0
-      UserDefaults.standard.set(mode, forKey: "mode")
-    } catch {
-      self.error = error.localizedDescription
-      mode = ""
+    if let workspace {
+      try JSONSerialization.data(withJSONObject: next).write(to: fileURL(workspace), options: [.atomic, .completeFileProtection])
+    } else {
+      var doc = document; doc["state"] = next
+      try persistDocument(doc)
     }
   }
   func calculation(_ name: String, _ args: [Any] = []) -> Row {
@@ -451,34 +475,58 @@ enum SessionKey {
     guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
       if result["code"] as? String == "DEVICE_VERIFICATION_REQUIRED",
         (server ?? baseURL) == baseURL, (token ?? SessionKey.read()) == SessionKey.read() { verificationRequired = true }
-      throw failure(result["error"] as? String ?? "Server request failed")
+      throw NSError(domain: "AssetHTTP", code: (response as? HTTPURLResponse)?.statusCode ?? 0,
+        userInfo: [NSLocalizedDescriptionKey: result["error"] as? String ?? "Sync is unavailable", "code": result["code"] as? String ?? ""])
     }
     return result
   }
   func refresh() async {
-    guard mode == "remote" else { return }
+    guard mode == "remote", !syncing, SessionKey.read() != nil else { return }
+    syncing = true
+    defer { syncing = false }
     let generation = workspaceGeneration
-    let server = baseURL
     let token = SessionKey.read()
     do {
-      let r = try await request("/state", server: server, token: token)
-      guard mode == "remote", generation == workspaceGeneration,
-        server == baseURL, token == SessionKey.read()
-      else { return }
-      let nextRevision = r["revision"] as? Int ?? 0
-      guard nextRevision >= revision else { return }
-      let next = try engine.call("validateState", [r["state"] as? JSON ?? [:]]) as? JSON ?? [:]
-      try persist(next)
-      state = next
-      revision = nextRevision
+      let r = try await request("/state", token: token)
+      guard generation == workspaceGeneration, token == SessionKey.read() else { return }
+      guard let remoteOwner = r["ownerId"] as? String else { throw failure("Sync is updating. Your changes are saved here.") }
+      if owner != remoteOwner {
+        guard owner == nil || owner == "legacy" || pendingCount == 0 else {
+          throw failure("Sign in with the same Google account to sync your saved changes.")
+        }
+        let guest = owner == nil ? document : nil
+        var next = try engine.call("createLocalWorkspace", [uid()]) as? JSON ?? [:]
+        next["owner"] = remoteOwner; next["state"] = r["state"]; next["revision"] = r["revision"]
+        if let guest, let guestState = guest["state"] as? JSON,
+          try engine.call("hasLocalRecords", [guestState]) as? Bool == true {
+          let id = guest["id"] as? String ?? uid()
+          try persist(guestState, workspace: "before-sync-" + id)
+          next = try engine.call("localCommand", [next, ["type": "workspace.merge", "payload": ["state": guestState, "id": id]], id]) as? JSON ?? [:]
+        }
+        try persistDocument(next); publishDocument()
+      } else if pendingCount == 0 && (r["revision"] as? Int ?? 0) >= revision { try receive(r) }
       connections = (r["connections"] as? [JSON] ?? []).map(Row.init)
       configured = r["plaidConfigured"] as? Bool ?? false
+      while let operation = (document["pending"] as? [JSON])?.first {
+        let result = try await request("/sync/command", body: ["ownerId": remoteOwner, "operation": operation])
+        guard generation == workspaceGeneration, token == SessionKey.read() else { return }
+        try receive(result, acknowledged: operation["id"] as? String)
+      }
+      syncConflict = false; syncStatus = "Synced"
     } catch {
-      guard mode == "remote", generation == workspaceGeneration,
-        server == baseURL, token == SessionKey.read()
-      else { return }
-      self.error = "Could not refresh. Showing saved data. \(error.localizedDescription)"
+      guard generation == workspaceGeneration, token == SessionKey.read() else { return }
+      let http = error as NSError
+      syncConflict = http.domain == "AssetHTTP" && (http.code == 409 || (http.code == 400 && pendingCount > 0))
+      syncStatus = syncConflict ? error.localizedDescription : http.code == 401
+        ? "Saved here · sign in to sync" : "Saved here · sync paused"
     }
+  }
+  func useSyncedChanges() async throws {
+    let r = try await request("/state")
+    guard r["ownerId"] as? String == owner else { throw failure("Sign in with the same Google account.") }
+    try persist(state, workspace: "before-sync-resolution-" + uid())
+    var next = document; next["state"] = r["state"]; next["revision"] = r["revision"]; next["pending"] = [JSON]()
+    try persistDocument(next); publishDocument(); syncConflict = false; syncStatus = "Synced"
   }
   func signInWithGoogle(
     server: String, authenticate: @MainActor (URL) async throws -> URL
@@ -519,63 +567,35 @@ enum SessionKey {
     let security = try await request("/security/status", server: address, token: token)
     try Task.checkCancellation()
     guard generation == workspaceGeneration else { throw failure("Workspace changed during sign-in") }
-    if security["enabled"] as? Bool == true && security["verified"] as? Bool != true {
-      try SessionKey.save(token)
-      UserDefaults.standard.set(address, forKey: "server")
-      UserDefaults.standard.set("remote", forKey: "mode")
-      state = [:]; revision = 0; connections = []; configured = false
-      try? FileManager.default.removeItem(at: fileURL("remote"))
-      mode = "remote"; verificationRequired = true
-      return
-    }
-    let result = try await request("/state", server: address, token: token)
-    try Task.checkCancellation()
-    guard generation == workspaceGeneration else {
-      throw failure("Workspace changed during sign-in")
-    }
-    let next = try engine.call("validateState", [result["state"] as? JSON ?? [:]]) as? JSON ?? [:]
-    let previousToken = SessionKey.read()
     try SessionKey.save(token)
-    do { try persist(next, workspace: "remote") } catch {
-      try? SessionKey.save(previousToken)
-      throw error
-    }
     UserDefaults.standard.set(address, forKey: "server")
     UserDefaults.standard.set("remote", forKey: "mode")
-    state = next
-    revision = result["revision"] as? Int ?? 0
-    connections = (result["connections"] as? [JSON] ?? []).map(Row.init)
-    configured = result["plaidConfigured"] as? Bool ?? false
     mode = "remote"
+    if security["enabled"] as? Bool == true && security["verified"] as? Bool != true {
+      verificationRequired = true
+      return
+    }
+    await refresh()
   }
   func command(_ type: String, _ payload: JSON) async throws {
-    guard !busy else { throw failure("A change is still saving") }
+    if owner == "legacy" {
+      await refresh()
+      guard owner != "legacy" else { throw failure("Connect once to finish updating this synced workspace before editing. Your records are still saved here.") }
+    }
+    guard !busy, !document.isEmpty else { throw failure("Your workspace is still opening") }
     busy = true
     defer { busy = false }
-    if mode == "remote" {
-      let generation = workspaceGeneration
-      do {
-        let r = try await request(
-          "/command", body: ["type": type, "payload": payload, "revision": revision])
-        guard mode == "remote", generation == workspaceGeneration else {
-          throw failure("Workspace changed while the update was saving")
-        }
-        let nextRevision = r["revision"] as? Int ?? 0
-        guard nextRevision >= revision else { return }
-        let next = try engine.call("validateState", [r["state"] as? JSON ?? [:]]) as? JSON ?? [:]
-        try persist(next)
-        state = next
-        revision = nextRevision
-      } catch {
-        if generation == workspaceGeneration { await refresh() }
-        throw error
-      }
-    } else {
-      let next =
-        try engine.call("applyCommand", [state, ["type": type, "payload": payload]]) as? JSON ?? [:]
-      try persist(next)
-      state = next
+    if type == "backup.restore" && owner != nil {
+      await refresh()
+      guard pendingCount == 0 else { throw failure("Sync saved changes before restoring a backup.") }
+      let r = try await request("/command", body: ["type": type, "payload": payload, "revision": revision])
+      try receive(r)
+      return
     }
+    let next = try engine.call("localCommand", [document, ["type": type, "payload": payload], uid()]) as? JSON ?? [:]
+    try persistDocument(next); publishDocument()
+    syncStatus = owner == nil ? "Saved on this device" : "Changes saved · syncing"
+    if mode == "remote" { Task { await refresh() } }
   }
   func perform(_ type: String, _ payload: JSON) {
     Task {
@@ -589,6 +609,8 @@ enum SessionKey {
     let generation = workspaceGeneration
     let server = baseURL
     let token = SessionKey.read()
+    await refresh()
+    guard pendingCount == 0 else { throw failure("Finish syncing saved changes before updating connected accounts.") }
     let r = try await request(path, body: body, server: server, token: token)
     guard mode == "remote", generation == workspaceGeneration, server == baseURL,
       token == SessionKey.read()
@@ -596,9 +618,7 @@ enum SessionKey {
     let nextRevision = r["revision"] as? Int ?? 0
     guard nextRevision >= revision else { return }
     let next = try engine.call("validateState", [r["state"] as? JSON ?? [:]]) as? JSON ?? [:]
-    try persist(next)
-    state = next
-    revision = nextRevision
+    try receive(["state": next, "revision": nextRevision])
   }
   func refreshBitcoin() async {
     guard mode == "remote", !isDemo, !busy,
@@ -636,25 +656,25 @@ enum SessionKey {
     return url
   }
   func signOut() {
-    verificationRequired = false
-    let wasRemote = mode == "remote"
-    let server = baseURL
+    guard pendingCount == 0 else { error = "Sync saved changes before signing out. You can export a backup in Settings."; return }
     let token = SessionKey.read()
-    workspaceGeneration += 1
-    if wasRemote {
-      try? SessionKey.save(nil)
-      if let url = try? fileURL("remote") { try? FileManager.default.removeItem(at: url) }
-    }
-    state = [:]
-    mode = ""
-    connections = []
-    configured = false
-    revision = 0
-    UserDefaults.standard.removeObject(forKey: "mode")
-    if wasRemote, let token {
-      Task { _ = try? await request("/auth/logout", body: [:], server: server, token: token) }
-    }
+    let server = baseURL
+    do {
+      let next = try engine.call("createLocalWorkspace", [uid()]) as? JSON ?? [:]
+      try SessionKey.save(nil)
+      do { try persistDocument(next) } catch {
+        try? SessionKey.save(token)
+        throw error
+      }
+      workspaceGeneration += 1
+      verificationRequired = false; connections = []; configured = false; syncConflict = false
+      syncStatus = "Saved on this device"
+      publishDocument()
+      UserDefaults.standard.set("private", forKey: "mode")
+      if let token { Task { _ = try? await request("/auth/logout", body: [:], server: server, token: token) } }
+    } catch { self.error = error.localizedDescription }
   }
+
 }
 
 /// A suspended connection task must never resume against a different signed-in workspace.

@@ -14,7 +14,7 @@ const result = await build({
   absWorkingDir: webRoot,
   stdin: {
     contents:
-      'export * from "./shared/core";export * from "./shared/demo";export * from "./shared/csv";export * from "./shared/copilot";',
+      'export * from "./shared/core";export * from "./shared/demo";export * from "./shared/csv";export * from "./shared/copilot";export * from "./shared/workspace";',
     resolveDir: webRoot,
     sourcefile: 'native-engine-entry.ts',
     loader: 'ts',

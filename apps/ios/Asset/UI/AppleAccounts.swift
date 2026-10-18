@@ -155,7 +155,7 @@ struct AppleAccountsView: View {
       if available && secured {
         Section {
           Text("Asset will read account names, balances, and transactions you select, including merchants, amounts, and dates. Selected data is stored in your private workspace and synced to the web app and your other devices. It is not sold or used for advertising.")
-          Link("Privacy policy", destination: URL(string: "https://asset.gtfol.dev/privacy.html")!)
+          Link("Privacy policy", destination: URL(string: "https://asset.gtfol.dev/privacy")!)
           Toggle("Sync selected Apple data to my Asset workspace and web app", isOn: $consent)
           Button("Choose Apple accounts") { perform { context in
             guard FinanceStore.isDataAvailable(.financialData) else { throw failure("Apple financial data is not available on this device.") }

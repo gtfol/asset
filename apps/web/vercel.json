@@ -17,6 +17,14 @@
   ],
   "rewrites": [
     {
+      "source": "/privacy",
+      "destination": "/privacy.html"
+    },
+    {
+      "source": "/terms",
+      "destination": "/terms.html"
+    },
+    {
       "source": "/api/:path*",
       "destination": "/api"
     },
@@ -34,6 +42,18 @@
           "value": "application/json"
         }
       ]
+    }
+  ],
+  "redirects": [
+    {
+      "source": "/privacy.html",
+      "destination": "/privacy",
+      "permanent": true
+    },
+    {
+      "source": "/terms.html",
+      "destination": "/terms",
+      "permanent": true
     }
   ]
 }

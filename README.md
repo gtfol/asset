@@ -21,7 +21,7 @@ The authoritative calculation engine lives in `apps/web/shared`. iOS includes it
 
 Set the Vercel project's **Root Directory to `apps/web`** and select **Vite**. The web app includes a same-origin API function and automatic database migrations. Configure a dedicated PostgreSQL `DATABASE_URL` and Google sign-in as described in [web hosting setup](apps/web/README.md#vercel-and-supabase). Each user adds their own Plaid Client ID and Production secret in Connections. Vercel Cron processes the resumable sync queue in the same deployment; configure the server encryption key and cron secret before enabling it.
 
-The native app uses bundle ID `org.gtfol.asset`, signing team `J59ZSG67SJ`, and App Store Connect app `6824126579`. `apps/ios/ExportOptions.plist` configures TestFlight uploads. Local native demo/manual workspaces work without a server; shared web/iPhone data requires the same reachable HTTPS Asset server. Apple account sync remains disabled pending FinanceKit approval.
+The native app uses bundle ID `org.gtfol.asset`, signing team `J59ZSG67SJ`, and App Store Connect app `6824126579`. `apps/ios/ExportOptions.plist` configures TestFlight uploads. Both apps open directly into an empty workspace and save records on the device. Optional Google sign-in adds local records to the cloud workspace and syncs later edits; there is no demo or server-selection screen. Apple account sync remains disabled pending FinanceKit approval.
 
 [Web setup](apps/web/README.md) · [iOS setup](apps/ios/README.md) · [Repository migration](docs/repository-migration.md)
 
@@ -31,7 +31,7 @@ The native app uses bundle ID `org.gtfol.asset`, signing team `J59ZSG67SJ`, and 
 
 Signed-in workspaces can track Bitcoin public addresses with current USD valuations and historical daily values, including available prices back to 2015. See [Bitcoin tracking](docs/BITCOIN.md) for coverage, privacy, and refresh limits, and [account connections](docs/ACCOUNT-CONNECTIONS.md) for connection coverage. [Venmo forwarding](docs/VENMO.md) can attach receipts to an existing imported account; server receiving setup is required.
 
-Manual accounts, CSV, and synthetic demo data work without Plaid credentials. The normal connection flow uses each user’s Plaid Production credentials. Sandbox remains available for development; live bank linking remains unverified. No goals, recurring-bill management, subscription tracker, AI chat, or model service are included.
+Manual accounts and CSV imports work without sign-in or Plaid credentials. The normal connection flow uses each user’s Plaid Production credentials. Sandbox remains available for development. No goals, recurring-bill management, subscription tracker, AI chat, or model service are included.
 
 ## License
 

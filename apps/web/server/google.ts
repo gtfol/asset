@@ -3,7 +3,7 @@ import { randomBytes, randomUUID, createHash } from 'node:crypto';
 import { z } from 'zod';
 import { createRemoteJWKSet, jwtVerify, type JWTVerifyGetKey } from 'jose';
 import { emptyState } from '../shared/core.js';
-import { createDemo } from '../shared/demo.js';
+import { defaultCategories } from '../shared/demo.js';
 import { newSession, tokenHash } from './auth.js';
 import type { Database } from './db.js';
 import { publicOrigin } from './hosting.js';
@@ -97,7 +97,7 @@ export async function googleWorkspace(db: Database, identity: GoogleIdentity) {
       .rows[0];
     if (existing) return existing.id as string;
     const state = emptyState();
-    state.categories = createDemo().categories;
+    state.categories = defaultCategories();
     const id = randomUUID();
     // Email collisions with legacy accounts must not transfer ownership of financial data.
     const created = await tx.query(

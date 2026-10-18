@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { mergeLocalWorkspace } from './workspace.js';
 import { importCopilot, copilotOptionsSchema, repairCopilotHistory } from './copilot.js';
 import { linkImportedAccount, reconcileHistory } from './account-links.js';
 export * from './account-links.js';
@@ -437,20 +438,20 @@ export function emptyState(): State {
     },
   };
 }
-export function applyCommand(input: State, command: Command): State {
-  const next = applyFinancialCommand(input, command);
+export function applyCommand(input: State, command: Command, now = new Date().toISOString()): State {
+  const next = applyFinancialCommand(input, command, now);
   return validateState(
     updateNotifications(
       input,
       next,
-      new Date().toISOString(),
+      now,
       command.type.startsWith('import.') ||
         command.type === 'backup.restore' ||
         command.type.startsWith('notifications.'),
     ),
   );
 }
-function applyFinancialCommand(input: State, command: Command): State {
+function applyFinancialCommand(input: State, command: Command, now: string): State {
   const s = validateState(JSON.parse(JSON.stringify(input))),
     p = command.payload;
   const id = String(p.id ?? '');
@@ -460,6 +461,8 @@ function applyFinancialCommand(input: State, command: Command): State {
     return t;
   };
   switch (command.type) {
+    case 'workspace.merge':
+      return mergeLocalWorkspace(s, p.state, z.string().uuid().parse(p.id));
     case 'transaction.create': {
       const t = transactionSchema.parse(p);
       if (t.source !== 'manual') throw Error('Use the import flow');
@@ -563,7 +566,7 @@ function applyFinancialCommand(input: State, command: Command): State {
         throw Error('Provider holdings cannot be manually overwritten');
       s.holdings = s.holdings.filter((x) => x.id !== h.id);
       s.holdings.push(h);
-      const date = today(s.settings.timezone);
+      const date = today(s.settings.timezone, new Date(now));
       s.holdingSnapshots = s.holdingSnapshots.filter(
         (p) => p.holdingId !== h.id || p.date !== date,
       );
@@ -670,6 +673,7 @@ function applyFinancialCommand(input: State, command: Command): State {
             .max(10 * 1024 * 1024)
             .parse(p.text),
           copilotOptionsSchema.parse(p.options),
+          now,
         ),
       );
     }

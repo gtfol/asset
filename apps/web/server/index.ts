@@ -10,6 +10,10 @@ import { notificationWorker } from './notifications.js';
 const root = fileURLToPath(new URL('..', import.meta.url));
 const db = await openDatabase(),
   app = createApp(db);
+for (const page of ['privacy', 'terms']) {
+  app.get('/' + page + '.html', (_req, res) => res.redirect(308, '/' + page));
+  app.get('/' + page, (_req, res) => res.sendFile(path.join(root, 'public', page + '.html')));
+}
 if (process.env.NODE_ENV === 'production') {
   app.use(express.static(path.join(root, 'dist')));
   app.get('/{*path}', (_req, res) => res.sendFile(path.join(root, 'dist/index.html')));

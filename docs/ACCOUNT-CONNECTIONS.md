@@ -20,7 +20,7 @@ Venmo also provides statement CSV downloads. Generic CSV imports remain availabl
 
 ## Apple milestone
 
-Apple's FinanceKit supplies consent-based on-device access to supported Apple Card, Apple Cash and Savings data in the US. It requires an approved managed entitlement for `org.gtfol.asset`. The gtfol organization signing team and Finance-category App Store Connect record are configured. The request is prepared; submission and entitlement approval are still pending.
+Apple's FinanceKit supplies consent-based on-device access to supported Apple Card, Apple Cash and Savings data in the US. It requires an approved managed entitlement for `org.gtfol.asset`. The gtfol organization signing team and Finance-category App Store Connect record are configured. The agreement was accepted and request **739VT6P73Z** submitted on October 18, 2026. Apple's review and entitlement approval are pending.
 
 The iPhone implementation requests consent before reading and uploading selected accounts, maps existing imported accounts, synchronizes transaction/balance changes with protected durable cursors, and removes synced Apple records on disconnect while restoring independently imported history. Sync runs on foreground unlock and explicit refresh. Cloud access requires authenticator verification on new sessions. Tests cover idempotency, imported edits, deletion, verification and owner isolation. No background extension or real Wallet sync is claimed. Enable both `AssetFinanceKitEnabled` and server `FINANCEKIT_ENABLED` only after approval, provisioning, and device testing.
 

@@ -34,10 +34,15 @@ private enum NativeStoreTests {
     ]
   }
 
-  static func main() throws {
+  static func main() async throws {
     // The executable has its own preferences domain. Do not open/persist an app workspace.
-    let store = Store()
-    try expect(store.mode.isEmpty, "Harness must start without a saved native workspace")
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let store = Store(directory: directory)
+    try expect(store.mode == "private" && store.accounts.isEmpty, "First launch opens an empty local workspace: \(store.error)")
+    try await store.command("account.save", ["id": "local-account", "name": "Local", "type": "checking", "currency": "USD", "balance": 12345, "source": "manual", "updatedAt": "2026-10-18T12:00:00Z"])
+    let reopened = Store(directory: directory)
+    try expect(reopened.accounts.first?.integer("balance") == 12345, "A local account survives a Store restart without signing in")
     let demo = try store.engine.call("createDemo", ["2026-10-15"]) as? JSON ?? [:]
     try expect(!demo.isEmpty, "Production calculation engine must load from the temporary bundle")
     try checkGoogleSignIn()
@@ -109,6 +114,8 @@ private enum NativeStoreTests {
     let code = try GoogleSignIn.callbackCode(
       from: URL(string: "org.gtfol.asset://auth/callback?code=one-time_code")!)
     try expect(code == "one-time_code", "Exact callback returns its one-time exchange code")
+    let emptyFragment = try GoogleSignIn.callbackCode(from: URL(string: "org.gtfol.asset://auth/callback?code=one-time_code#")!)
+    try expect(emptyFragment == "one-time_code", "OAuth redirects may carry an empty fragment without changing the callback")
     for invalid in [
       "org.gtfol.asset://auth/callback?error=auth_failed",
       "org.gtfol.asset://auth/callback?code=one&error=auth_failed",

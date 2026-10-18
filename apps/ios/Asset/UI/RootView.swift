@@ -12,7 +12,10 @@ struct RootView: View {
   var body: some View {
     Group {
       if store.mode.isEmpty {
-        WelcomeView()
+        VStack(spacing: 16) {
+          Text("Your saved data could not be opened.")
+          Text(store.error).foregroundStyle(Color.assetSecondary)
+        }.padding(20)
       } else {
         NavigationStack {
           VStack(spacing: 0) {
@@ -85,7 +88,7 @@ struct RootView: View {
               case "Accounts": AccountForm()
               case "Categories": CategoryForm()
               case "Investments": HoldingForm()
-              default: TransactionForm()
+              default: if store.accounts.isEmpty { AccountForm() } else { TransactionForm() }
               }
             }
             .task { await store.refresh() }
@@ -111,42 +114,11 @@ struct RootView: View {
     }
   }
 }
-struct WelcomeView: View {
-  @EnvironmentObject var store: Store
-  @State var connect = false
-  var body: some View {
-    NavigationStack {
-      VStack(alignment: .leading, spacing: 24) {
-        Spacer()
-        Text("asset").font(.custom("Lato-Regular", size: 24, relativeTo: .title2))
-        Text("Accounts, transactions, budgets, and investments.")
-          .font(.custom("Lato-Regular", size: 16, relativeTo: .body))
-          .foregroundStyle(Color.assetSecondary)
-        Spacer()
-        Button("Explore the demo") { store.openLocal(demo: true) }
-          .buttonStyle(.borderedProminent)
-          .buttonBorderShape(.roundedRectangle(radius: 2))
-          .controlSize(.large).tint(.assetText).foregroundStyle(Color.assetBackground)
-        Button("Start a private local workspace") { store.openLocal(demo: false) }
-          .buttonStyle(.plain).frame(minHeight: 44)
-        Button("Sign in with Google") { connect = true }
-          .buttonStyle(.plain).frame(minHeight: 44)
-        Text(
-          "The demo uses synthetic data. Local workspaces stay on this device until you export them."
-        ).font(.custom("Lato-Regular", size: 13, relativeTo: .caption)).foregroundStyle(
-          Color.assetSecondary)
-      }.padding(20).frame(maxWidth: 680, alignment: .leading).frame(maxWidth: .infinity).background(
-        Color.assetBackground
-      ).sheet(isPresented: $connect) {
-        ServerLoginView()
-      }
-    }
-  }
-}
 struct DashboardView: View {
   @EnvironmentObject var store: Store
   @Binding var month: String
   @State var reviewAll = false
+  @State private var addAccount = false
   var body: some View {
     let d = store.calculation("dashboard", [month])
     let w = store.calculation("netWorth")
@@ -156,8 +128,18 @@ struct DashboardView: View {
         HStack {
           Text("Dashboard").font(.custom("Lato-Regular", size: 20, relativeTo: .title3))
           Spacer()
-          if store.isDemo { StatusLabel(text: "Demo") }
+
         }
+        if store.accounts.isEmpty {
+          VStack(alignment: .leading, spacing: 18) {
+            Text("Your finances, in one place.").font(.custom("Lato-Regular", size: 24))
+            Text("Add an account or import your transactions to get started.").foregroundStyle(Color.assetSecondary)
+            Button("Add an account") { addAccount = true }.buttonStyle(AssetBorderButtonStyle())
+            NavigationLink("Import transactions") { ImportView() }
+            Text("Saved on this device. Sync anytime from Settings.").font(.custom("Lato-Regular", size: 13)).foregroundStyle(Color.assetSecondary)
+          }.frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 28)
+            .sheet(isPresented: $addAccount) { AccountForm() }
+        } else {
         MonthPicker(month: $month)
         Card(title: "Spending this month") {
           HStack(alignment: .top) {
@@ -269,6 +251,7 @@ struct DashboardView: View {
           ).font(.custom("Lato-Regular", size: 13, relativeTo: .caption)).foregroundStyle(
             Color.assetSecondary)
           NavigationLink("View cash flow") { CashFlowView(month: $month) }
+        }
         }
       }.padding(20)
     }.refreshable { await store.refresh() }

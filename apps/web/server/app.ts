@@ -1,4 +1,5 @@
 import express from 'express';
+import { assertWorkspaceChanges, operationSchema, stableJSON } from '../shared/workspace.js';
 import { appleRoutes } from './apple.js';
 import { securityRoutes, verificationGate } from './security.js';
 import { randomUUID, timingSafeEqual } from 'node:crypto';
@@ -218,10 +219,25 @@ export function createApp(
     const configuration = await plaidConfiguration(db, res.locals.owner).catch(() => null);
     res.json({
       ...(await getState(db, res.locals.owner)),
+      ownerId: res.locals.owner,
       sessionId: tokenHash('plaid-context:' + (readToken(req) ?? '')),
       connections: await listConnections(db, res.locals.owner),
       plaidConfigured: !!configuration?.configured && configuration.workerReady,
     });
+  });
+  app.post('/api/sync/command', async (req, res) => {
+    const input = z.object({ ownerId: z.string().uuid(), operation: operationSchema }).parse(req.body);
+    if (input.ownerId !== res.locals.owner) {
+      res.status(409).json({ error: 'Your sign-in changed. Local changes have not been sent to another account.', code: 'OWNER_CHANGED' });
+      return;
+    }
+    const op = input.operation;
+    if (op.command.type === 'backup.restore') throw Error('Restore a backup while online');
+    res.json(await mutateState(db, res.locals.owner, s => {
+      assertWorkspaceChanges(s, op.changes);
+      return applyCommand(s, op.command as Command, op.timestamp);
+    }, undefined, op.command.type.startsWith('import.') || op.command.type === 'workspace.merge',
+    { id: op.id, hash: tokenHash(stableJSON(op)) }));
   });
   app.post('/api/command', async (req, res) => {
     const c = z
@@ -229,8 +245,13 @@ export function createApp(
         type: z.string(),
         payload: z.record(z.string(), z.unknown()),
         revision: z.number().int(),
+        ownerId: z.string().uuid().optional(),
       })
       .parse(req.body);
+    if (c.ownerId && c.ownerId !== res.locals.owner) {
+      res.status(409).json({ error: 'Your sign-in changed. Reload this workspace before editing.', code: 'OWNER_CHANGED' });
+      return;
+    }
     res.json(
       await mutateState(
         db,
@@ -443,6 +464,7 @@ export function createApp(
         return;
       }
       res.status(error.status ?? (error instanceof PlaidError ? 503 : 400)).json({
+        ...(error.code === 'SYNC_CONFLICT' ? { code: error.code } : {}),
         error:
           error instanceof z.ZodError
             ? error.issues.map((x) => x.message).join('; ')

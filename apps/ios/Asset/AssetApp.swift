@@ -260,7 +260,7 @@ private struct PrivacyWindowAnchor: UIViewRepresentable {
 private struct PrivateAppRoot: View {
   @EnvironmentObject var store: Store
   @StateObject private var privacy = AppPrivacy()
-  var protected: Bool { !store.mode.isEmpty && !store.isDemo }
+  var protected: Bool { !store.isDemo && (store.mode == "remote" || !store.accounts.isEmpty) }
   var body: some View {
     Group {
       if store.verificationRequired { NavigationStack { DeviceVerificationView() } }

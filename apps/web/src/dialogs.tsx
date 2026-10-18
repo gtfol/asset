@@ -1110,10 +1110,12 @@ export function SettingsDialog({
   state,
   run,
   onClose,
+  sync,
 }: {
   state: State;
   run: Run;
   onClose: () => void;
+  sync?: React.ReactNode;
 }) {
   const [restore, setRestore] = useState<State | null>(null),
     [confirm, setConfirm] = useState(''),
@@ -1121,6 +1123,8 @@ export function SettingsDialog({
     [theme, setTheme] = useState(localStorage.getItem('asset-theme') ?? 'light');
   return (
     <Modal title="Settings & data" onClose={onClose}>
+      {sync}
+      <p className="tiny muted"><a href="/privacy" target="_blank" rel="noreferrer">Privacy</a> · <a href="/terms" target="_blank" rel="noreferrer">Terms</a></p>
       <NotificationPreferences state={state} run={run} />
       <HistoryMatches state={state} run={run} />
       <label className="theme-control">

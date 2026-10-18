@@ -8,11 +8,8 @@ import {
   type State,
   type Transaction,
 } from './core.js';
-export function createDemo(asOf = today()): State {
-  const s = emptyState();
-  s.settings.demo = true;
-  const now = asOf + 'T16:00:00Z';
-  s.categories = [
+export function defaultCategories(): State["categories"] {
+  return [
     ['home', 'Home', 'home', '#73849a', 'Essentials'],
     ['groceries', 'Groceries', 'groceries', '#8d9b8a', 'Food & drink'],
     ['restaurants', 'Restaurants', 'restaurants', '#9d8f83', 'Food & drink'],
@@ -24,6 +21,12 @@ export function createDemo(asOf = today()): State {
     ['travel', 'Travel', 'travel', '#829894', 'Lifestyle'],
     ['other', 'Other', 'other', '#92979e', 'Everyday'],
   ].map(([id, name, icon, color, group]) => ({ id, name, icon, color, group, archived: false }));
+}
+export function createDemo(asOf = today()): State {
+  const s = emptyState();
+  s.settings.demo = true;
+  const now = asOf + 'T16:00:00Z';
+  s.categories = defaultCategories();
   s.accounts = [
     ['checking', 'Everyday Checking', 'checking', 1284563, '4821'],
     ['savings', 'High Yield Savings', 'savings', 2468000, '7402'],

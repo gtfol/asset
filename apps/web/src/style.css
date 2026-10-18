@@ -2647,3 +2647,6 @@ dialog label {
 .venmo-route input[readonly] {
   font-size: 0.8rem;
 }
+ .workspace-empty { padding-top: 56px; }
+ .workspace-empty h2 { font-size: 28px; font-weight: 400; margin: 0 0 12px; }
+ .workspace-empty .button-row { margin: 24px 0 16px; }

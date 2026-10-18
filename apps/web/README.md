@@ -12,7 +12,7 @@ npm ci
 npm run dev
 ```
 
-Open **http://localhost:4317** and choose **Explore the demo**, or sign in with Google after configuring Google OAuth. Manual accounts and CSV imports need no cloud project or provider credentials.
+Open **http://localhost:4317** to start using an empty workspace immediately. Manual accounts and CSV imports save to IndexedDB in this browser. Google sign-in in Settings is optional; it adds local records to your cloud workspace and syncs subsequent edits. Pending edits survive offline use and reloads. The production build caches the app shell for offline reopening; API and authentication responses are never cached.
 
 The server binds to localhost by default and stores its embedded PostgreSQL database in `apps/web/.data/postgres`. An optional `DATABASE_URL` uses a separate PostgreSQL database. Configuration is listed in [.env.example](.env.example); the server reads process environment and does not automatically load an `.env` file.
 
@@ -74,7 +74,7 @@ The first API request applies the SQL files in `server/migrations` atomically. A
 
 The server uses PKCE and a short-lived, HttpOnly `SameSite=Lax` state cookie for browser login. The resulting Asset session is HttpOnly, `SameSite=Strict`, and Secure over HTTPS. iOS uses the same Google browser flow, then exchanges a one-time callback code with its own PKCE proof for a Keychain-held session. No native Google secret is needed. Users map by their verified Google subject; an email collision with a legacy workspace requires explicit migration rather than automatic data transfer.
 
-Manual accounts, CSV imports, and the synthetic demo need no Plaid credentials. Vercel requests and responses are limited to 4.5 MB; large workspaces/backups require the persistent service deployment until server-side paging is implemented. The transaction screen currently pages rendered rows, while the API transfers the complete workspace.
+Manual accounts and CSV imports need no sign-in or Plaid credentials. Vercel requests and responses are limited to 4.5 MB; large workspaces/backups require the persistent service deployment until server-side paging is implemented. The transaction screen currently pages rendered rows, while the API transfers the complete workspace.
 
 ### Bank synchronization
 

@@ -266,8 +266,8 @@ export function previewCopilot(
   };
 }
 
-export function importCopilot(state: State, text: string, options: CopilotOptions): State {
-  const preview = previewCopilot(text, options, state);
+export function importCopilot(state: State, text: string, options: CopilotOptions, now?: string): State {
+  const preview = previewCopilot(text, options, state, now);
   if (preview.errors.length)
     throw Error(`Fix ${preview.errors.length} invalid rows before importing`);
   return {

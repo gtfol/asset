@@ -157,6 +157,7 @@ export async function mutateState(
   fn: (state: State, tx: SQL) => Promise<State> | State,
   revision?: number,
   quiet = false,
+  operation?: { id: string; hash: string },
 ) {
   return db.transaction(async (tx) => {
     const r = await tx.query<{ state: State; revision: number }>(
@@ -165,6 +166,13 @@ export async function mutateState(
     );
     const row = r.rows[0];
     if (!row) throw Error('Workspace not found');
+    if (operation) {
+      const previous = (await tx.query<{ hash: string }>('SELECT hash FROM workspace_operations WHERE owner_id=$1 AND id=$2', [owner, operation.id])).rows[0];
+      if (previous) {
+        if (previous.hash !== operation.hash) throw Object.assign(Error('Sync operation changed during retry'), { status: 409 });
+        return { state: validateState(row.state), revision: row.revision };
+      }
+    }
     if (revision !== undefined && row.revision !== revision)
       throw Object.assign(Error('Data changed on another device. Reload and try again.'), {
         status: 409,
@@ -184,6 +192,7 @@ export async function mutateState(
       'UPDATE workspaces SET state=$1,revision=revision+1,updated_at=now() WHERE owner_id=$2',
       [JSON.stringify(next), owner],
     );
+    if (operation) await tx.query('INSERT INTO workspace_operations(owner_id,id,hash) VALUES($1,$2,$3)', [owner, operation.id, operation.hash]);
     return { state: next, revision: row.revision + 1 };
   });
 }
