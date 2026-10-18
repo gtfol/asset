@@ -262,10 +262,16 @@ private struct PrivateAppRoot: View {
   @StateObject private var privacy = AppPrivacy()
   var protected: Bool { !store.mode.isEmpty && !store.isDemo }
   var body: some View {
-    RootView()
+    Group {
+      if store.verificationRequired { NavigationStack { DeviceVerificationView() } }
+      else { RootView() }
+    }
       .allowsHitTesting(!privacy.hidden)
       .accessibilityHidden(privacy.hidden)
       .background(PrivacyWindowAnchor(privacy: privacy).frame(width: 0, height: 0))
+      .onChange(of: privacy.hidden) { _, hidden in
+        if !hidden { Task { await AppleAccountSync.shared.sync(store: store) } }
+      }
       .onChange(of: protected, initial: true) { _, value in privacy.configure(protected: value) }
   }
 }

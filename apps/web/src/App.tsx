@@ -1,3 +1,5 @@
+import { loanLenders } from '../shared/loans';
+import { DeviceVerification } from './device-verification';
 import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import {
   Landmark,
@@ -86,7 +88,13 @@ export async function api(
     );
   }
   const data = await res.json();
-  if (!res.ok) throw Object.assign(Error(data.error ?? 'Request failed'), { status: res.status });
+  if (data.code === 'DEVICE_VERIFICATION_REQUIRED')
+    window.dispatchEvent(new Event('asset-verification-required'));
+  if (!res.ok)
+    throw Object.assign(Error(data.error ?? 'Request failed'), {
+      status: res.status,
+      code: data.code,
+    });
   return data;
 }
 export type Run = (command: Command) => Promise<void>;
@@ -99,6 +107,12 @@ const sections = [
   'Cash Flow',
 ] as const;
 export function App() {
+  const [verificationRequired, setVerificationRequired] = useState(false);
+  useEffect(() => {
+    const require = () => setVerificationRequired(true);
+    window.addEventListener('asset-verification-required', require);
+    return () => window.removeEventListener('asset-verification-required', require);
+  }, []);
   const [state, setState] = useState<State | null>(null),
     [revision, setRevision] = useState(0),
     [loading, setLoading] = useState(true),
@@ -126,6 +140,7 @@ export function App() {
     const generation = sessionGeneration.current;
     try {
       const r = await api('/state');
+      setVerificationRequired(false);
       if (generation !== sessionGeneration.current) return;
       if (r.revision < revisionRef.current) return;
       if (revisionRef.current === 0) setMonth(today(r.state.settings.timezone).slice(0, 7));
@@ -274,6 +289,7 @@ export function App() {
         <p>Opening your workspace…</p>
       </div>
     );
+  if (verificationRequired) return <DeviceVerification onReady={load} />;
   if (!state) return <Welcome onReady={load} message={error} />;
   const d = dashboardView?.data,
     worth = dashboardView?.worth,
@@ -465,7 +481,16 @@ export function App() {
             <div className="dashboard-grid">
               <section className="card spending-card">
                 <div className="card-heading">
-                  <h3>Monthly spending</h3>
+                  <div className="heading-with-info">
+                    <h3>Monthly spending</h3>
+                    <Help>
+                      Actuals include all posted spending less refunds, excluding transfers and
+                      budget-excluded transactions. Ideal pace spreads the budget evenly through the
+                      calendar month. Estimate = month-to-date spending ÷ {d.elapsed} elapsed
+                      calendar days × {d.days} days. Early-month and lumpy spending can distort it.
+                      No future bills have been deducted.
+                    </Help>
+                  </div>
                   <button
                     onClick={() => txNavigate({ start: month + '-01', end: monthEnd(month) })}
                   >
@@ -529,13 +554,6 @@ export function App() {
                     )}
                   </span>
                 </div>
-                <Help>
-                  Actuals include all posted spending less refunds, excluding transfers and
-                  budget-excluded transactions. Ideal pace spreads the budget evenly through the
-                  calendar month. Estimate = month-to-date spending ÷ {d.elapsed} elapsed calendar
-                  days × {d.days} days. Early-month and lumpy spending can distort it. No future
-                  bills have been deducted.
-                </Help>
               </section>
               <WorthCard worth={worth} currency={currency} onOpen={() => navigate('Accounts')} />
               <section className="card review-card">
@@ -1602,7 +1620,9 @@ function Accounts({
                                     ? 'Venmo receipts · balance not synced'
                                     : a.source === 'bitcoin'
                                       ? 'Bitcoin address'
-                                      : 'Plaid cached balance'}{' '}
+                                      : a.source === 'financekit'
+                                        ? 'Apple · synced from iPhone'
+                                        : 'Plaid cached balance'}{' '}
                             · {a.mask ?? a.currency}
                             {!a.enabled ? ' · Sync account disabled' : ''}
                           </small>
@@ -1660,6 +1680,27 @@ function Accounts({
                 label={`${a.name} balance history`}
               />
               <RangeControl value={range} onChange={setRange} />
+              {a.loan && (
+                <section>
+                  <h3>{loanLenders[a.loan.lender].name}</h3>
+                  <p>
+                    {a.loan.ratePercent == null
+                      ? 'Rate not entered'
+                      : `${a.loan.ratePercent}% ${a.loan.rateType}`}
+                  </p>
+                  <p>Scheduled payment: {money(a.loan.paymentAmount, a.currency)}</p>
+                  <p>Next payment: {a.loan.nextPaymentDate ?? 'Not entered'}</p>
+                  {loanLenders[a.loan.lender].url && (
+                    <a href={loanLenders[a.loan.lender].url!} target="_blank" rel="noreferrer">
+                      Open lender account
+                    </a>
+                  )}
+                  <p className="tiny muted">
+                    Updated from your statements. Balance changes are recorded separately from bank
+                    payments.
+                  </p>
+                </section>
+              )}
               {a.bitcoin && (
                 <BitcoinDetail
                   key={a.id}

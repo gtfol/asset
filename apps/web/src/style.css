@@ -710,22 +710,14 @@ main {
   pointer-events: auto;
   bottom: 25px;
 }
-.chart-tooltip {
-  position: absolute;
-  bottom: 26px;
-  left: 50%;
-  transform: translateX(-50%);
-  padding: 9px 12px;
-  border: 1px solid var(--border);
-  border-radius: 2px;
+.chart-readout {
+  min-height: 24px;
+  padding: 2px 10px;
   line-height: 1.5;
-  z-index: 2;
-  background: var(--canvas);
-  color: var(--text);
-  border-color: var(--border);
+  color: var(--muted);
   font-size: 12px;
-  max-width: 100%;
-  white-space: normal;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
 }
 .chart-legend {
   display: flex;
@@ -764,27 +756,22 @@ main {
 .spending-footer b {
   color: var(--muted);
 }
-.help {
-  color: var(--muted);
-  margin-top: 15px;
-  border-top: 1px solid var(--border);
-  padding-top: 11px;
-  border-color: var(--border);
-  font-size: 12px;
-}
-.help summary {
+.heading-with-info {
   display: flex;
   align-items: center;
-  gap: 5px;
-  cursor: pointer;
-  color: var(--muted);
-  font-size: 12px;
+  gap: 6px;
 }
-.help > div {
-  line-height: 1.7;
-  padding-top: 10px;
-  font-size: 13px;
+.calculation-info {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
   color: var(--muted);
+}
+.calculation-info:hover {
+  color: var(--text);
 }
 .range-control {
   display: flex;

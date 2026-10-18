@@ -13,6 +13,9 @@
 <key>UIAppFonts</key><array><string>Lato-Regular.ttf</string><string>Lato-Medium.ttf</string></array>
 <key>UILaunchScreen</key><dict/>
 <key>NSFaceIDUsageDescription</key><string>Unlock your financial information when you open Asset.</string>
+<key>NSFinancialDataUsageDescription</key><string>Read the Apple account balances and transactions you select to track spending and net worth in your private Asset workspace.</string>
+<key>AssetFinanceKitEnabled</key><false/>
+<key>ITSAppUsesNonExemptEncryption</key><false/>
 <key>UIApplicationSceneManifest</key><dict><key>UIApplicationSupportsMultipleScenes</key><false/></dict>
 <key>UISupportedInterfaceOrientations</key><array><string>UIInterfaceOrientationPortrait</string><string>UIInterfaceOrientationLandscapeLeft</string><string>UIInterfaceOrientationLandscapeRight</string></array>
 <key>UISupportedInterfaceOrientations~ipad</key><array><string>UIInterfaceOrientationPortrait</string><string>UIInterfaceOrientationPortraitUpsideDown</string><string>UIInterfaceOrientationLandscapeLeft</string><string>UIInterfaceOrientationLandscapeRight</string></array>

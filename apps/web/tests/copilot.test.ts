@@ -12,7 +12,7 @@ describe('Copilot migration', () => {
     const text = csv(
       spend,
       '2026-10-16,Refund,-2.34,posted,Restaurants,Food & Drink,false,,regular,Card,1234,,',
-      '2026-10-16,Salary,-5000,posted,,,false,,income,Checking,4444,,',
+      '2026-10-16,Salary,-5000,posted,,,true,,income,Checking,4444,,',
       '2026-10-16,Payment,120,posted,,,true,,internal transfer,Checking,4444,,',
       '2026-10-16,Music,10,pending,Subscriptions,,false,Favorite,regular,Card,9876,,Music',
     );
@@ -27,6 +27,12 @@ describe('Copilot migration', () => {
       'spending',
     ]);
     expect(next.transactions[0].notes).toBe('Note');
+    expect(next.transactions.map((t) => t.reviewed)).toEqual([true, true, true, true, false]);
+    expect(next.transactions[2]).toMatchObject({
+      excluded: false,
+      raw: { copilot: { excluded: true } },
+    });
+    expect(next.transactions[3].excluded).toBe(true);
     expect(next.transactions[4]).toMatchObject({
       recurring: 'Music',
       tags: 'Favorite',
@@ -37,6 +43,29 @@ describe('Copilot migration', () => {
       spending: 1000,
     });
     expect(next.notifications?.items).toEqual([]);
+  });
+  it('keeps uncategorized purchases pending review and allows reviewing all history manually', () => {
+    const text = csv(
+      spend,
+      '2026-10-16,Unknown,12.34,posted,,,false,,regular,Card,1234,,',
+      '2026-10-16,Ignored,12.34,posted,,,true,,regular,Card,1234,,',
+      '2026-10-16,Uncategorized,12.34,posted,Uncategorized,,false,,regular,Card,1234,,',
+    );
+    const preview = previewCopilot(text, options, emptyState());
+    expect(preview.transactions.map((t) => t.reviewed)).toEqual([true, false, true, false]);
+    expect(
+      previewCopilot(text, { ...options, markReviewed: false }, emptyState()).transactions.every(
+        (t) => !t.reviewed,
+      ),
+    ).toBe(true);
+    const imported = applyCommand(emptyState(), {
+      type: 'import.copilot',
+      payload: { text, options },
+    });
+    imported.transactions[0].reviewed = false;
+    imported.transactions[0].edits = { excluded: true, categoryId: 'other' };
+    const again = applyCommand(imported, { type: 'import.copilot', payload: { text, options } });
+    expect(again.transactions).toEqual(imported.transactions);
   });
   it('preserves repeated identical purchases and skips a repeated import after edits', () => {
     const text = csv(spend, spend);
@@ -57,6 +86,37 @@ describe('Copilot migration', () => {
     const preview = previewCopilot(csv(spend, spend), options, first);
     expect(preview.duplicates).toBe(1);
     expect(preview.transactions).toHaveLength(1);
+  });
+  it('repairs old review flags and income without changing classifications or unmatched bank records', () => {
+    const text = csv(spend, '2026-10-16,Salary,-5000,posted,,,true,,income,Checking,4444,,');
+    const before = applyCommand(emptyState(), {
+      type: 'import.copilot',
+      payload: { text, options },
+    });
+    before.transactions.forEach((t) => {
+      t.reviewed = false;
+    });
+    const salary = before.transactions[1];
+    salary.source = 'plaid';
+    salary.providerId = 'bank-id';
+    salary.excluded = true;
+    salary.edits = { kind: 'income', excluded: true, notes: 'Keep my note' };
+    before.transactions[0].edits = { categoryId: 'other', notes: 'My category edit' };
+    before.transactions.push({ ...salary, id: 'bank-only', importIdentity: undefined, edits: {} });
+    const command = { type: 'import.copilotReview', payload: { text } };
+    const after = applyCommand(before, command);
+    expect(after.transactions.map((t) => t.reviewed)).toEqual([true, true, false]);
+    expect(after.transactions[0].edits).toEqual(before.transactions[0].edits);
+    expect(after.transactions[1].edits).toEqual({
+      kind: 'income',
+      excluded: false,
+      notes: 'Keep my note',
+    });
+    expect(after.transactions[2]).toEqual(before.transactions[2]);
+    expect(after.accounts).toEqual(before.accounts);
+    expect(applyCommand(after, command)).toEqual(after);
+    before.transactions[0].raw = { asset_split_conflict: true };
+    expect(applyCommand(before, command).transactions[0].reviewed).toBe(false);
   });
   it('settles an imported pending row without losing user edits', () => {
     const text = csv(spend.replace('posted', 'pending'));

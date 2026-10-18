@@ -34,7 +34,26 @@ export const accountSchema = z.object({
   creditLimit: centsSchema.positive().nullable().optional(),
   includeInNetWorth: z.boolean().default(true),
   enabled: z.boolean().default(true),
-  source: z.enum(['demo', 'manual', 'csv', 'plaid', 'bitcoin', 'venmo']),
+  source: z.enum(['demo', 'manual', 'csv', 'plaid', 'bitcoin', 'venmo', 'financekit']),
+  loan: z
+    .object({
+      lender: z.enum(['santander', 'synchrony', 'other']).default('other'),
+      ratePercent: z.number().finite().min(0).max(100).nullable().default(null),
+      rateType: z.enum(['APR', 'APY']).default('APR'),
+      paymentAmount: centsSchema.nonnegative().nullable().default(null),
+      nextPaymentDate: dateSchema.optional(),
+    })
+    .optional(),
+  financekit: z
+    .object({
+      deviceId: z.string().uuid(),
+      sequence: z.number().int().nonnegative(),
+      consentAt: z.string().datetime(),
+      syncedAt: z.string().datetime().optional(),
+      lastBatchHash: z.string().optional(),
+      original: z.record(z.string(), z.unknown()).optional(),
+    })
+    .optional(),
   venmo: z.object({ bankTransfers: z.boolean().default(true) }).optional(),
   bitcoin: z
     .object({
@@ -83,7 +102,7 @@ export const transactionSchema = z.object({
   reviewed: z.boolean().default(false),
   pending: z.boolean().default(false),
   removed: z.boolean().default(false),
-  source: z.enum(['demo', 'manual', 'csv', 'plaid', 'venmo']),
+  source: z.enum(['demo', 'manual', 'csv', 'plaid', 'venmo', 'financekit']),
   importedAt: z.string(),
   providerId: z.string().optional(),
   pendingProviderId: z.string().nullable().optional(),
@@ -102,12 +121,13 @@ export const budgetSchema = z.object({
   amount: centsSchema.nonnegative(),
 });
 export const snapshotSchema = z.object({
+  asOf: z.string().datetime().optional(),
   id: z.string(),
   accountId: z.string(),
   date: dateSchema,
   balance: centsSchema,
   currency: z.string().length(3),
-  source: z.enum(['demo', 'manual', 'csv', 'plaid', 'bitcoin', 'venmo']),
+  source: z.enum(['demo', 'manual', 'csv', 'plaid', 'bitcoin', 'venmo', 'financekit']),
 });
 export const holdingSchema = z.object({
   id: z.string(),

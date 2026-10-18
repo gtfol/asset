@@ -29,6 +29,7 @@ function stableID(value: string) {
 }
 export const copilotOptionsSchema = z.object({
   currency: z.string().regex(/^[A-Z]{3}$/),
+  markReviewed: z.boolean().optional(),
   accounts: z
     .record(
       z.string(),
@@ -189,8 +190,15 @@ export function previewCopilot(
         kind,
         categoryId: category.id,
         notes: row.note ?? '',
-        excluded: row.excluded === 'true',
-        reviewed: false,
+        // Copilot's exclusion flag describes spending budgets. Income still belongs in cash flow.
+        excluded: kind !== 'income' && row.excluded === 'true',
+        reviewed:
+          options.markReviewed !== false &&
+          row.status === 'posted' &&
+          ((!!categoryName && norm(categoryName) !== 'uncategorized') ||
+            kind === 'income' ||
+            kind === 'transfer' ||
+            row.excluded === 'true'),
         pending: row.status === 'pending',
         removed: false,
         source: 'csv',
@@ -199,6 +207,13 @@ export function previewCopilot(
         tags: row.tags?.trim() || undefined,
         edits: {},
         splits: [],
+        raw: {
+          copilot: {
+            excluded: row.excluded === 'true',
+            category: categoryName,
+            status: row.status,
+          },
+        },
       };
       const key = fingerprint(t);
       // Status, category, notes and tags are excluded from identity, so edits don't duplicate imports.
@@ -263,5 +278,48 @@ export function importCopilot(state: State, text: string, options: CopilotOption
       ...state.transactions.map((t) => preview.updated.find((u) => u.id === t.id) ?? t),
       ...preview.transactions,
     ],
+  };
+}
+
+export function previewCopilotHistoryRepair(state: State, text: string) {
+  const source = previewCopilot(
+    text,
+    { currency: state.settings.currency, accounts: {} },
+    {
+      ...state,
+      accounts: [],
+      transactions: [],
+      categories: [],
+    },
+  );
+  if (source.errors.length) throw Error('Fix invalid CSV rows before updating imported history');
+  const byIdentity = new Map(source.transactions.map((t) => [t.importIdentity, t]));
+  const reviewed: string[] = [],
+    income: string[] = [];
+  for (const t of state.transactions) {
+    const original = byIdentity.get(t.importIdentity);
+    if (!original || t.removed || t.raw?.asset_split_conflict) continue;
+    if (original.reviewed && !t.pending && !t.reviewed) reviewed.push(t.id);
+    if (
+      original.kind === 'income' &&
+      (t.edits.kind ?? t.kind) === 'income' &&
+      (t.edits.excluded ?? t.excluded)
+    )
+      income.push(t.id);
+  }
+  return { reviewed, income };
+}
+
+export function repairCopilotHistory(state: State, text: string): State {
+  const changes = previewCopilotHistoryRepair(state, text);
+  const reviewed = new Set(changes.reviewed),
+    income = new Set(changes.income);
+  return {
+    ...state,
+    transactions: state.transactions.map((t) => ({
+      ...t,
+      ...(reviewed.has(t.id) ? { reviewed: true } : {}),
+      ...(income.has(t.id) ? { excluded: false, edits: { ...t.edits, excluded: false } } : {}),
+    })),
   };
 }

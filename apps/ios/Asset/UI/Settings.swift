@@ -711,6 +711,7 @@ struct ConnectionsView: View {
           "Sign in to connect your accounts. Local accounts and CSV work without a server."
         )
       } else {
+        Section { NavigationLink("Apple accounts") { AppleAccountsView() }.disabled(locked) }
         Section { NavigationLink("Venmo receipt forwarding") { VenmoConnectionView() }.disabled(locked) }
         credentialsSection
         if configuration?.flag("configured") == true {

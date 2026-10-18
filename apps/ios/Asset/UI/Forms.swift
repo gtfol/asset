@@ -278,8 +278,13 @@ struct AccountForm: View {
   @State var start = ""
   @State var end = ""
   @State var complete = false
+  @State var lender = "other"
+  @State var rate = ""
+  @State var rateType = "APR"
+  @State var payment = ""
+  @State var dueDate = ""
   @State var loaded = false
-  var connected: Bool { ["plaid", "bitcoin", "venmo"].contains(account?.text("source") ?? "") }
+  var connected: Bool { ["plaid", "bitcoin", "venmo", "financekit"].contains(account?.text("source") ?? "") }
   var body: some View {
     FormShell(
       title: account == nil ? "Add manual account" : "Edit account",
@@ -292,6 +297,13 @@ struct AccountForm: View {
         if !connected {
           p["balance"] = balance.isEmpty ? NSNull() : try store.cents(balance) as Any
           p["creditLimit"] = creditLimit.isEmpty ? NSNull() : try store.cents(creditLimit) as Any
+        }
+        if type == "loan" && !connected {
+          var loan: JSON = ["lender": lender, "rateType": rateType,
+            "ratePercent": rate.isEmpty ? NSNull() : (Double(rate) ?? -1) as Any,
+            "paymentAmount": payment.isEmpty ? NSNull() : try store.cents(payment) as Any]
+          if !dueDate.isEmpty { loan["nextPaymentDate"] = dueDate }
+          p["loan"] = loan
         }
         p["includeInNetWorth"] = included
         p["enabled"] = account?.flag("enabled") ?? true
@@ -325,6 +337,20 @@ struct AccountForm: View {
         ).font(.custom("Lato-Regular", size: 13, relativeTo: .caption)).foregroundStyle(
           Color.assetSecondary)
       }
+      if type == "loan" && !connected {
+        Section("Loan details") {
+          Picker("Lender", selection: $lender) {
+            Text("Santander Consumer USA").tag("santander")
+            Text("Synchrony Pay Later").tag("synchrony")
+            Text("Other lender").tag("other")
+          }
+          TextField("Annual rate (%)", text: $rate).keyboardType(.decimalPad)
+          Picker("Rate label", selection: $rateType) { Text("APR").tag("APR"); Text("APY").tag("APY") }
+          TextField("Scheduled payment", text: $payment).keyboardType(.decimalPad)
+          TextField("Next payment · YYYY-MM-DD", text: $dueDate)
+          Text("Use the balance and rate from your statement. Update the balance after payments; bank withdrawals do not reveal the principal and interest split. These details do not enable automatic lender syncing.").foregroundStyle(Color.assetSecondary)
+        }
+      }
       if !connected {
         Section("Transaction history coverage") {
           TextField("Start · YYYY-MM-DD", text: $start)
@@ -349,6 +375,11 @@ struct AccountForm: View {
         start = a.text("coverageStart")
         end = a.text("coverageEnd")
         complete = a.flag("coverageComplete")
+        let loan = a.object("loan")
+        lender = loan.text("lender", "other"); rateType = loan.text("rateType", "APR")
+        rate = loan.missing("ratePercent") ? "" : String(loan.number("ratePercent"))
+        payment = loan.missing("paymentAmount") ? "" : String(loan.number("paymentAmount") / 100)
+        dueDate = loan.text("nextPaymentDate")
       }
     }
   }

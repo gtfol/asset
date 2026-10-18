@@ -189,6 +189,7 @@ describe('Venmo receiving lifecycle', () => {
   }
   beforeEach(async () => {
     await db.query('DELETE FROM venmo_routes');
+    await db.query('UPDATE users SET google_subject=NULL');
     const state = fixture();
     state.accounts[0].name = 'Venmo imported';
     state.accounts[0].source = 'csv';
@@ -214,6 +215,35 @@ describe('Venmo receiving lifecycle', () => {
       message_id: randomUUID(),
     };
     receive.mockClear();
+  });
+  it('uses the clean shared address only for verified source mailboxes and rejects ambiguous recipients', async () => {
+    const shared = 'venmo@asset-test.resend.app';
+    await webhook({ address: shared });
+    expect((await inbox()).receipts).toHaveLength(0);
+    await db.query('UPDATE venmo_routes SET source_verified=true WHERE id=$1', [route.id]);
+    expect((await inbox()).routes[0].address).toBe(shared);
+    await webhook({ address: shared });
+    expect((await inbox()).receipts).toHaveLength(1);
+    const count = (await getState(db, 'owner')).state.transactions.length;
+    // The existing opaque address remains valid during the Gmail transition.
+    await webhook();
+    expect((await getState(db, 'owner')).state.transactions).toHaveLength(count);
+    await request('/venmo', { sourceEmail: 'owner@example.invalid' }, other);
+    await db.query('UPDATE venmo_routes SET source_verified=true WHERE owner_id=$1', ['other']);
+    mail.id = randomUUID();
+    mail.text = 'Transaction ID: 9876543210123456';
+    await webhook({ address: shared });
+    expect((await inbox(other)).receipts).toHaveLength(0);
+    expect((await inbox()).receipts).toHaveLength(1);
+  });
+  it('does not trust an unverified claim to another user’s email address', async () => {
+    await db.query("UPDATE users SET google_subject='google-owner' WHERE id='owner'");
+    expect((await inbox()).routes[0].address).toBe('venmo@asset-test.resend.app');
+    await request('/venmo', { sourceEmail: 'owner@example.invalid' }, other);
+    await webhook({ address: 'venmo@asset-test.resend.app' });
+    expect((await inbox(other)).receipts).toHaveLength(0);
+    expect((await inbox()).receipts).toHaveLength(1);
+    await db.query('UPDATE users SET google_subject=NULL WHERE id=$1', ['owner']);
   });
   it('keeps the existing account, encrypts routing tokens, isolates owners and checks sessions', async () => {
     expect(route.accountId).toBe('a');

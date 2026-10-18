@@ -1,13 +1,13 @@
 # Venmo receipt forwarding
 
-Asset uses a unique email forwarding address per Venmo account, following the same general approach described by [Copilot](https://help.copilot.money/en/articles/3971255-venmo-integration-faq). No Venmo password, inbox OAuth grant, scraping, or Plaid connection is involved.
+Asset uses `venmo@receipts.gtfol.dev` for verified source mailboxes, following the same general forwarding approach described by [Copilot](https://help.copilot.money/en/articles/3971255-venmo-integration-faq). Ownership is established by the account's verified Google email or an authenticated confirmation/manual forward to an initial private address. Ambiguous recipients are rejected. Private addresses remain valid during migration. No Venmo password, inbox OAuth grant, scraping, or Plaid connection is involved.
 
 ## Deployment
 
 1. In the existing Resend team, enable Receiving on a dedicated inbound subdomain, or use the team's assigned `*.resend.app` receiving domain. Do not replace the MX records serving the team's ordinary inboxes. No outgoing email is required by this feature.
 2. Configure an `email.received` webhook to `https://asset.gtfol.dev/api/venmo/webhook`.
 3. Set `VENMO_RECEIVING_DOMAIN`, `RESEND_API_KEY` (with receiving read access), and `RESEND_WEBHOOK_SECRET` on the server. The existing `TOKEN_ENCRYPTION_KEY` encrypts routing tokens, confirmation codes/links, and temporary receipt previews. Keep secrets out of client builds and Git.
-4. Migrations `009_venmo_email.sql` and `010_venmo_confirmation_links.sql` run through the existing migration runner. Both tables enable RLS; browser clients never access them directly. Redeploy after environment configuration.
+4. Migrations `009_venmo_email.sql`, `010_venmo_confirmation_links.sql`, and `012_venmo_shared_address.sql` run through the existing migration runner. Tables enable RLS; browser clients never access them directly. Redeploy after environment configuration.
 5. The existing authenticated cron worker purges receipt previews after seven days and expired Gmail codes/links after one hour. The local worker does the same. Ensure the existing worker schedule is active.
 6. In Asset's Connections → Venmo, select the existing imported Venmo account, enter the email that receives Venmo receipts, and create a forwarding address. Configure an email rule forwarding only `venmo@venmo.com`. Gmail's forwarding confirmation link or code appears after Refresh in Asset; leave global inbox forwarding disabled. Confirmation links must use Google's HTTPS `mail-settings.google.com/mail/vf-` endpoint.
 

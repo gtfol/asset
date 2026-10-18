@@ -9,9 +9,31 @@
       "includeFiles": "server/{migrations/*.sql,certs/*.crt}"
     }
   },
-  "crons": [{ "path": "/api/internal/plaid-worker", "schedule": "* * * * *" }],
+  "crons": [
+    {
+      "path": "/api/internal/plaid-worker",
+      "schedule": "* * * * *"
+    }
+  ],
   "rewrites": [
-    { "source": "/api/:path*", "destination": "/api" },
-    { "source": "/plaid/oauth", "destination": "/index.html" }
+    {
+      "source": "/api/:path*",
+      "destination": "/api"
+    },
+    {
+      "source": "/plaid/oauth",
+      "destination": "/index.html"
+    }
+  ],
+  "headers": [
+    {
+      "source": "/.well-known/apple-app-site-association",
+      "headers": [
+        {
+          "key": "Content-Type",
+          "value": "application/json"
+        }
+      ]
+    }
   ]
 }

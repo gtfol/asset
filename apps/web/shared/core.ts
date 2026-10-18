@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { importCopilot, copilotOptionsSchema } from './copilot.js';
+import { importCopilot, copilotOptionsSchema, repairCopilotHistory } from './copilot.js';
 import { linkImportedAccount } from './account-links.js';
 export * from './account-links.js';
 import {
@@ -529,11 +529,11 @@ function applyFinancialCommand(input: State, command: Command): State {
     case 'account.save': {
       const a = accountSchema.parse(p);
       const existing = s.accounts.find((x) => x.id === a.id);
-      if (existing && ['plaid', 'bitcoin', 'venmo'].includes(existing.source)) {
+      if (existing && ['plaid', 'bitcoin', 'venmo', 'financekit'].includes(existing.source)) {
         existing.includeInNetWorth = a.includeInNetWorth;
         existing.name = a.name;
       } else {
-        if (['plaid', 'bitcoin', 'venmo'].includes(a.source))
+        if (['plaid', 'bitcoin', 'venmo', 'financekit'].includes(a.source))
           throw Error('Use the connection flow to create tracked accounts');
         s.accounts = s.accounts.filter((x) => x.id !== a.id);
         s.accounts.push(a);
@@ -580,7 +580,10 @@ function applyFinancialCommand(input: State, command: Command): State {
       if (
         snap.source === 'plaid' ||
         snap.source === 'bitcoin' ||
-        s.accounts.some((a) => a.id === snap.accountId && a.source === 'bitcoin')
+        snap.source === 'financekit' ||
+        s.accounts.some(
+          (a) => a.id === snap.accountId && ['bitcoin', 'financekit'].includes(a.source),
+        )
       )
         throw Error('Provider snapshots are managed by sync');
       s.snapshots = s.snapshots.filter(
@@ -670,9 +673,20 @@ function applyFinancialCommand(input: State, command: Command): State {
         ),
       );
     }
+    case 'import.copilotReview': {
+      return validateState(
+        repairCopilotHistory(
+          s,
+          z
+            .string()
+            .max(10 * 1024 * 1024)
+            .parse(p.text),
+        ),
+      );
+    }
     case 'backup.restore': {
       const restored = validateState(p.state);
-      if (restored.accounts.some((a) => ['plaid', 'venmo'].includes(a.source)))
+      if (restored.accounts.some((a) => ['plaid', 'venmo', 'financekit'].includes(a.source)))
         throw Error('Restore backups with disconnected account provenance');
       if (restored.settings.demo !== s.settings.demo)
         throw Error('Demo and private data cannot be mixed');
@@ -693,16 +707,20 @@ export function backup(s: State) {
     exportedAt: new Date().toISOString(),
     state: {
       ...s,
-      accounts: s.accounts.map(({ connectionId, providerId, ...a }) => ({
+      accounts: s.accounts.map(({ connectionId, providerId, financekit, ...a }) => ({
         ...a,
-        source: ['plaid', 'venmo'].includes(a.source) ? 'manual' : a.source,
+        source: ['plaid', 'venmo', 'financekit'].includes(a.source) ? 'manual' : a.source,
       })),
       transactions: s.transactions.map(
         ({ raw, connectionId, providerId, pendingProviderId, ...t }) => ({
           ...t,
-          source: ['plaid', 'venmo'].includes(t.source) ? 'manual' : t.source,
+          source: ['plaid', 'venmo', 'financekit'].includes(t.source) ? 'manual' : t.source,
         }),
       ),
+      snapshots: s.snapshots.map((p) => ({
+        ...p,
+        source: p.source === 'financekit' ? 'manual' : p.source,
+      })),
       holdingSnapshots: s.holdingSnapshots.map(({ providerId, ...h }) => ({
         ...h,
         source: h.source === 'plaid' ? 'manual' : h.source,

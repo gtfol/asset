@@ -1,5 +1,10 @@
 import { useMemo, useState } from 'react';
-import { copilotAccounts, previewCopilot, type CopilotOptions } from '../shared/copilot';
+import {
+  copilotAccounts,
+  previewCopilot,
+  previewCopilotHistoryRepair,
+  type CopilotOptions,
+} from '../shared/copilot';
 import { money, type Command, type State } from '../shared/core';
 
 export function CopilotImport({
@@ -21,12 +26,36 @@ export function CopilotImport({
   const [preview, setPreview] = useState<ReturnType<typeof previewCopilot> | null>(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [updatedHistory, setUpdatedHistory] = useState(false);
+  const repair = useMemo(() => {
+    try {
+      return previewCopilotHistoryRepair(state, text);
+    } catch {
+      return { reviewed: [], income: [] };
+    }
+  }, [state, text]);
   return (
     <section className="import-preview">
       <h3>Copilot export</h3>
       <p className="muted">
-        Accounts, categories, notes, exclusions, and recurring labels are preserved. Account
-        balances and holdings are not included in this file.
+        Accounts, categories, notes, spending exclusions, and recurring labels are preserved.
+        Account balances and holdings are not included in this file.
+      </p>
+      <label className="check-label">
+        <input
+          type="checkbox"
+          checked={options.markReviewed !== false}
+          onChange={(e) => {
+            setOptions({ ...options, markReviewed: e.target.checked });
+            setPreview(null);
+          }}
+        />
+        Mark classified history as reviewed
+      </label>
+      <p className="tiny muted">
+        Copilot does not export review status. Posted transactions with a category, income or
+        transfer type, or an exclusion will be treated as reviewed. Pending and uncategorized
+        purchases stay in your review queue. Income is included in cash flow.
       </p>
       <label>
         Currency
@@ -121,6 +150,36 @@ export function CopilotImport({
       </button>
       {preview && (
         <>
+          {(repair.reviewed.length > 0 || repair.income.length > 0) && (
+            <div className="import-history-repair">
+              <h3>Previously imported history</h3>
+              <p className="muted">
+                Mark {repair.reviewed.length.toLocaleString()} classified transactions as reviewed
+                and include {repair.income.length.toLocaleString()} imported income transactions in
+                cash flow. Categories, notes, transfers, and excluded purchases stay as they are.
+                This also updates history already matched to connected accounts.
+              </p>
+              <button
+                className="border-button"
+                disabled={busy}
+                onClick={async () => {
+                  setBusy(true);
+                  setError('');
+                  try {
+                    await run({ type: 'import.copilotReview', payload: { text } });
+                    setUpdatedHistory(true);
+                  } catch (e: any) {
+                    setError(e.message);
+                  } finally {
+                    setBusy(false);
+                  }
+                }}
+              >
+                {busy ? 'Updating…' : 'Update imported history'}
+              </button>
+            </div>
+          )}
+          {updatedHistory && <p role="status">Imported history updated.</p>}
           <h3>
             {preview.transactions.length.toLocaleString()} ready · {preview.updated.length} updated
             · {preview.duplicates.toLocaleString()} already imported

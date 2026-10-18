@@ -21,7 +21,7 @@ The authoritative calculation engine lives in `apps/web/shared`. iOS includes it
 
 Set the Vercel project's **Root Directory to `apps/web`** and select **Vite**. The web app includes a same-origin API function and automatic database migrations. Configure a dedicated PostgreSQL `DATABASE_URL` and Google sign-in as described in [web hosting setup](apps/web/README.md#vercel-and-supabase). Each user adds their own Plaid Client ID and Production secret in Connections. Vercel Cron processes the resumable sync queue in the same deployment; configure the server encryption key and cron secret before enabling it.
 
-The native app keeps bundle ID `org.gtfol.asset`. Signing, App Store Connect, and TestFlight upload are not configured. Local native demo/manual workspaces work without a server; shared web/iPhone data requires the same reachable HTTPS Asset server.
+The native app uses bundle ID `org.gtfol.asset`, signing team `J59ZSG67SJ`, and App Store Connect app `6824126579`. `apps/ios/ExportOptions.plist` configures TestFlight uploads. Local native demo/manual workspaces work without a server; shared web/iPhone data requires the same reachable HTTPS Asset server. Apple account sync remains disabled pending FinanceKit approval.
 
 [Web setup](apps/web/README.md) · [iOS setup](apps/ios/README.md) · [Repository migration](docs/repository-migration.md)
 

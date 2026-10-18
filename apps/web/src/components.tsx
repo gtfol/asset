@@ -144,13 +144,22 @@ export function Empty({ title, children }: { title: string; children?: React.Rea
   );
 }
 export function Help({ children }: { children: React.ReactNode }) {
+  const [open, setOpen] = useState(false);
   return (
-    <details className="help">
-      <summary>
-        <Info size={13} /> How this is calculated
-      </summary>
-      <div>{children}</div>
-    </details>
+    <>
+      <button
+        className="calculation-info"
+        aria-label="About spending calculations"
+        onClick={() => setOpen(true)}
+      >
+        <Info size={14} />
+      </button>
+      {open && (
+        <Modal title="Spending calculations" onClose={() => setOpen(false)}>
+          <p className="muted">{children}</p>
+        </Modal>
+      )}
+    </>
   );
 }
 export type Point = { date: string; value: number | null; ideal?: number | null };
@@ -203,22 +212,20 @@ export function LineChart({
         aria-label={label}
         viewBox={`0 0 ${w} ${h}`}
         onPointerMove={(e) => {
-          const r = e.currentTarget.getBoundingClientRect();
+          const transform = e.currentTarget.getScreenCTM();
+          if (!transform || !points.length) return;
+          const cursor = new DOMPoint(e.clientX, e.clientY).matrixTransform(transform.inverse());
           setActive(
             Math.max(
               0,
               Math.min(
                 points.length - 1,
-                Math.round(
-                  ((((e.clientX - r.left) / r.width) * w - pad) / (w - 2 * pad)) *
-                    (points.length - 1),
-                ),
+                Math.round(((cursor.x - pad) / (w - 2 * pad)) * (points.length - 1)),
               ),
             ),
           );
         }}
       >
-        <title>{label}</title>
         <line x1={pad} y1={y(0)} x2={w - pad} y2={y(0)} stroke="var(--chart-grid)" />
         {budget !== undefined && budget !== null && (
           <line
@@ -304,13 +311,15 @@ export function LineChart({
         onChange={(e) => setActive(Number(e.target.value))}
         onBlur={() => setActive(null)}
       />
-      {selected && (
-        <output className="chart-tooltip" aria-live="polite">
-          {selected.date} ·{' '}
-          {selected.value === null ? 'No actual yet' : money(selected.value, currency)}
-          {selected.ideal != null && ` · Ideal ${money(selected.ideal, currency)}`}
-        </output>
-      )}
+      <div className="chart-readout">
+        {selected && (
+          <output aria-live="polite">
+            {selected.date} ·{' '}
+            {selected.value === null ? 'No actual yet' : money(selected.value, currency)}
+            {selected.ideal != null && ` · Ideal ${money(selected.ideal, currency)}`}
+          </output>
+        )}
+      </div>
       <span className="sr-only">
         {known.length
           ? `${known.length} observed values. Latest ${money(known.at(-1)!.value, currency)} on ${known.at(-1)!.date}.`

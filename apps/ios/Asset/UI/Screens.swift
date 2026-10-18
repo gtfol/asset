@@ -399,6 +399,17 @@ struct AccountDetail: View {
           Text("\(a.text("source")) · as of \(a.text("updatedAt"))").font(
             .custom("Lato-Regular", size: 13, relativeTo: .caption)
           ).foregroundStyle(Color.assetSecondary)
+          if !a.missing("loan") {
+            let loan = a.object("loan")
+            let lender = loan.text("lender")
+            Text(lender == "santander" ? "Santander Consumer USA" : lender == "synchrony" ? "Synchrony Pay Later" : "Loan details")
+            if !loan.missing("ratePercent") { Text("\(loan.number("ratePercent").formatted())% \(loan.text("rateType", "APR"))") }
+            Text("Scheduled payment: \(money(loan.data["paymentAmount"], a.text("currency")))")
+            Text("Next payment: \(loan.text("nextPaymentDate", "Not entered"))")
+            if lender == "santander" { Link("Open lender account", destination: URL(string: "https://myaccount.santanderconsumerusa.com/")!) }
+            if lender == "synchrony" { Link("Open lender account", destination: URL(string: "https://www.synchrony.com/quickaccess/signin/paylater")!) }
+            Text("Updated from your statements. Balance changes are recorded separately from bank payments.").font(.footnote).foregroundStyle(Color.assetSecondary)
+          }
           HistoryChart(
             points: historyPoints(
               store.row.rows("snapshots").filter { $0.text("accountId") == accountID },

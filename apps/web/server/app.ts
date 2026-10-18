@@ -1,4 +1,6 @@
 import express from 'express';
+import { appleRoutes } from './apple.js';
+import { securityRoutes, verificationGate } from './security.js';
 import { randomUUID, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
 import { applyCommand, backup, validateState, type Command } from '../shared/core.js';
@@ -187,6 +189,14 @@ export function createApp(
     res.status(410).json({ error: 'Email sign-in is no longer supported. Continue with Google.' });
   });
   app.use('/api', authenticated(db));
+  app.post('/api/auth/logout', async (req, res) => {
+    await db.query('DELETE FROM sessions WHERE token_hash=$1', [tokenHash(readToken(req) ?? '')]);
+    res.clearCookie('asset_session', { path: '/' });
+    res.json({ ok: true });
+  });
+  app.use('/api/security', securityRoutes(db));
+  app.use('/api', verificationGate(db));
+  app.use('/api/apple', appleRoutes(db));
   app.use('/api/notifications', notificationRoutes(db));
   app.use(['/api/bitcoin', '/api/venmo'], (req, res, next) => {
     const expected = req.header('x-asset-session');
@@ -203,11 +213,6 @@ export function createApp(
   });
   app.use('/api/bitcoin', bitcoinRoutes(db, bitcoin));
   app.use('/api/venmo', venmoRoutes(db));
-  app.post('/api/auth/logout', async (req, res) => {
-    await db.query('DELETE FROM sessions WHERE token_hash=$1', [tokenHash(readToken(req) ?? '')]);
-    res.clearCookie('asset_session', { path: '/' });
-    res.json({ ok: true });
-  });
   app.get('/api/state', async (req, res) => {
     // A missing encryption key must not make manual financial records inaccessible.
     const configuration = await plaidConfiguration(db, res.locals.owner).catch(() => null);
@@ -233,9 +238,10 @@ export function createApp(
         async (s, tx) => {
           if (
             c.type === 'backup.restore' &&
-            ((await listConnections(tx, res.locals.owner)).some(
-              (c: any) => c.status !== 'disconnected',
-            ) ||
+            (s.accounts.some((a) => a.source === 'financekit') ||
+              (await listConnections(tx, res.locals.owner)).some(
+                (c: any) => c.status !== 'disconnected',
+              ) ||
               (
                 await tx.query('SELECT id FROM venmo_routes WHERE owner_id=$1 AND active=true', [
                   res.locals.owner,

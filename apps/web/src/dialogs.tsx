@@ -1,3 +1,4 @@
+import { loanLenders } from '../shared/loans';
 import React, { useState } from 'react';
 import { X, Check, Plus, Split, Download, Upload } from 'lucide-react';
 import {
@@ -533,7 +534,9 @@ export function AccountEditor({
 }) {
   const a = state.accounts.find((a) => a.id === id),
     [error, setError] = useState('');
-  const connected = a?.source === 'plaid' || a?.source === 'bitcoin' || a?.source === 'venmo';
+  const [accountType, setAccountType] = useState(a?.type ?? 'checking');
+  const connected =
+    a !== undefined && ['plaid', 'bitcoin', 'venmo', 'financekit'].includes(a.source);
   return (
     <Modal title={a ? 'Edit account' : 'Add manual account'} onClose={onClose}>
       <form
@@ -563,6 +566,18 @@ export function AccountEditor({
                 enabled: a?.enabled ?? true,
                 source: a?.source ?? 'manual',
                 updatedAt: new Date().toISOString(),
+                loan:
+                  !connected && accountType === 'loan'
+                    ? {
+                        lender: f.get('lender'),
+                        ratePercent: f.get('ratePercent') ? Number(f.get('ratePercent')) : null,
+                        rateType: f.get('rateType'),
+                        paymentAmount: f.get('paymentAmount')
+                          ? parseMoney(String(f.get('paymentAmount')))
+                          : null,
+                        nextPaymentDate: f.get('nextPaymentDate') || undefined,
+                      }
+                    : a?.loan,
                 coverageComplete: connected ? a.coverageComplete : f.get('complete') === 'on',
                 ...(connected
                   ? {}
@@ -584,7 +599,12 @@ export function AccountEditor({
         </label>
         <label>
           Type
-          <select name="type" disabled={connected} defaultValue={a?.type ?? 'checking'}>
+          <select
+            name="type"
+            disabled={connected}
+            value={accountType}
+            onChange={(e) => setAccountType(e.target.value as typeof accountType)}
+          >
             {['checking', 'savings', 'credit', 'investment', 'loan', 'manual'].map((t) => (
               <option key={t}>{t}</option>
             ))}
@@ -610,6 +630,64 @@ export function AccountEditor({
             </select>
           </label>
         </div>
+        {accountType === 'loan' && !connected && (
+          <fieldset>
+            <legend>Loan details</legend>
+            <label>
+              Lender
+              <select name="lender" defaultValue={a?.loan?.lender ?? 'other'}>
+                {Object.entries(loanLenders).map(([key, value]) => (
+                  <option key={key} value={key}>
+                    {value.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <div className="form-grid">
+              <label>
+                Annual rate (%)
+                <input
+                  name="ratePercent"
+                  type="number"
+                  min="0"
+                  max="100"
+                  step="0.001"
+                  defaultValue={a?.loan?.ratePercent ?? ''}
+                />
+              </label>
+              <label>
+                Rate label
+                <select name="rateType" defaultValue={a?.loan?.rateType ?? 'APR'}>
+                  <option>APR</option>
+                  <option>APY</option>
+                </select>
+              </label>
+            </div>
+            <div className="form-grid">
+              <label>
+                Scheduled payment
+                <input
+                  name="paymentAmount"
+                  inputMode="decimal"
+                  defaultValue={a?.loan?.paymentAmount == null ? '' : a.loan.paymentAmount / 100}
+                />
+              </label>
+              <label>
+                Next payment due
+                <input
+                  type="date"
+                  name="nextPaymentDate"
+                  defaultValue={a?.loan?.nextPaymentDate ?? ''}
+                />
+              </label>
+            </div>
+            <p className="tiny muted">
+              Use the balance and rate on your lender’s statement. Update the balance after
+              payments; bank withdrawals alone do not tell us the principal and interest split.
+              These details do not enable automatic lender syncing.
+            </p>
+          </fieldset>
+        )}
         <label>
           Credit limit (credit cards only, optional)
           <input

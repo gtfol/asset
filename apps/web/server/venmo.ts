@@ -23,6 +23,7 @@ type Route = {
   source_email: string;
   encrypted_token: string;
   active: boolean;
+  source_verified: boolean;
   created_at: string;
 };
 export interface ReceivedEmail {
@@ -189,6 +190,14 @@ export async function processVenmoEmail(
     sender === 'forwarding-noreply@google.com' &&
     /forwarding confirmation/i.test(email.subject) &&
     text.toLowerCase().includes(route.source_email);
+  if (confirmation || manual) {
+    // A signed message from this mailbox, delivered to the private route address,
+    // proves control of the source independently of the app's Google account.
+    await db.query(
+      'UPDATE venmo_routes SET source_verified=true WHERE id=$1 AND active=true AND encrypted_token=$2',
+      [route.id, route.encrypted_token],
+    );
+  }
   if (confirmation) {
     const code = text.match(/confirmation code\s*:?\s*(\d{6,12})/i)?.[1];
     const link = text.match(/https:\/\/mail-settings\.google\.com\/mail\/vf-[^\s<>"']+/)?.[0];
@@ -346,8 +355,44 @@ export function venmoWebhook(db: Database, provider: ReceivingProvider = new Res
       ).rows[0];
       if (row) matches.push(row);
     }
+    const shared = [...data.to, ...(data.received_for ?? [])].some(
+      (a) => mailbox(a) === `venmo@${receivingDomain()}`,
+    );
+    let received: ReceivedEmail | undefined;
+    if (shared) {
+      received = await provider.get(data.email_id);
+      if (received.id !== data.email_id)
+        throw fail('The email service returned an unexpected message.', 503);
+      const sender = mailbox(received.from);
+      const candidates =
+        sender === 'venmo@venmo.com'
+          ? [...received.to, ...(received.received_for ?? [])].map(mailbox)
+          : sender === 'forwarding-noreply@google.com'
+            ? []
+            : [sender];
+      // Never guess a workspace from a public alias or unverified source address.
+      // Google confirmations can be assigned only to already-verified mailboxes.
+      const routes = (
+        await db.query<Route>(`SELECT v.* FROM venmo_routes v JOIN users u ON u.id=v.owner_id
+        WHERE v.active=true AND (v.source_verified=true OR (u.google_subject IS NOT NULL AND lower(u.email)=v.source_email))`)
+      ).rows;
+      const text = (
+        received.text || convert(received.html ?? '', { wordwrap: false })
+      ).toLowerCase();
+      const mentionedEmails = new Set(
+        text.match(/[a-z0-9.!#$%&'*+\/=?^_`{|}~-]+@[a-z0-9.-]+\.[a-z]{2,}/g) ?? [],
+      );
+      const eligible = routes.filter(
+        (r) =>
+          candidates.includes(r.source_email) ||
+          (sender === 'forwarding-noreply@google.com' &&
+            /forwarding confirmation/i.test(received!.subject) &&
+            mentionedEmails.has(r.source_email)),
+      );
+      for (const r of eligible) if (!matches.some((m) => m.id === r.id)) matches.push(r);
+    }
     if (matches.length === 1) {
-      const email = await provider.get(data.email_id);
+      const email = received ?? (await provider.get(data.email_id));
       if (email.id !== data.email_id)
         throw fail('The email service returned an unexpected message.', 503);
       await processVenmoEmail(db, matches[0], email);
@@ -381,6 +426,19 @@ export function venmoRoutes(db: Database) {
         [owner],
       )
     ).rows;
+    const ownerEmail = (
+      await db.query<{ email: string; google_subject: string | null }>(
+        'SELECT email,google_subject FROM users WHERE id=$1',
+        [owner],
+      )
+    ).rows[0];
+    const counts = (
+      await db.query<{ source_email: string; count: string }>(
+        `SELECT v.source_email,count(*) FROM venmo_routes v JOIN users u ON u.id=v.owner_id
+         WHERE v.active=true AND (v.source_verified=true OR
+           (u.google_subject IS NOT NULL AND lower(u.email)=v.source_email)) GROUP BY v.source_email`,
+      )
+    ).rows;
     res.json({
       configured: venmoReady(),
       routes: routes.map((r) => ({
@@ -390,7 +448,14 @@ export function venmoRoutes(db: Database) {
         active: r.active,
         address:
           r.active && receivingDomain()
-            ? `${decryptToken(r.encrypted_token)}@${receivingDomain()}`
+            ? `${
+                (r.source_verified ||
+                  (ownerEmail?.google_subject &&
+                    ownerEmail.email.toLowerCase() === r.source_email)) &&
+                Number(counts.find((c) => c.source_email === r.source_email)?.count) === 1
+                  ? 'venmo'
+                  : decryptToken(r.encrypted_token)
+              }@${receivingDomain()}`
             : null,
         verificationCode:
           r.verification_code && +new Date(r.verification_expires_at) > Date.now()
@@ -489,7 +554,7 @@ export function venmoRoutes(db: Database) {
         account.venmo = { bankTransfers: p.bankTransfers };
         await tx.query(
           `INSERT INTO venmo_routes(id,owner_id,account_id,source_email,token_hash,encrypted_token) VALUES($1,$2,$3,$4,$5,$6)
-        ON CONFLICT(owner_id,account_id) DO UPDATE SET source_email=$4,token_hash=$5,encrypted_token=$6,active=true,verification_code=NULL,verification_url=NULL,verification_expires_at=NULL,created_at=now()`,
+        ON CONFLICT(owner_id,account_id) DO UPDATE SET source_email=$4,token_hash=$5,encrypted_token=$6,active=true,source_verified=false,verification_code=NULL,verification_url=NULL,verification_expires_at=NULL,created_at=now()`,
           [id, owner, account.id, p.sourceEmail.toLowerCase(), hash(token), encryptToken(token)],
         );
         s.transactions = s.transactions.map((t) => venmoBankTransfer(t, s));

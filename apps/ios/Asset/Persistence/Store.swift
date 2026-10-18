@@ -320,6 +320,7 @@ enum SessionKey {
   private var cachedCategoriesByID: [String: Row]?
   @Published var mode = ""
   @Published var error = ""
+  @Published var verificationRequired = false
   @Published var bitcoinError = ""
   @Published var busy = false
   @Published var connections: [Row] = []
@@ -448,6 +449,8 @@ enum SessionKey {
     let (data, response) = try await session.data(for: req)
     let result = try JSONSerialization.jsonObject(with: data) as? JSON ?? [:]
     guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+      if result["code"] as? String == "DEVICE_VERIFICATION_REQUIRED",
+        (server ?? baseURL) == baseURL, (token ?? SessionKey.read()) == SessionKey.read() { verificationRequired = true }
       throw failure(result["error"] as? String ?? "Server request failed")
     }
     return result
@@ -512,6 +515,18 @@ enum SessionKey {
     }
     guard let token = login["token"] as? String, !token.isEmpty else {
       throw failure("Server did not issue a session")
+    }
+    let security = try await request("/security/status", server: address, token: token)
+    try Task.checkCancellation()
+    guard generation == workspaceGeneration else { throw failure("Workspace changed during sign-in") }
+    if security["enabled"] as? Bool == true && security["verified"] as? Bool != true {
+      try SessionKey.save(token)
+      UserDefaults.standard.set(address, forKey: "server")
+      UserDefaults.standard.set("remote", forKey: "mode")
+      state = [:]; revision = 0; connections = []; configured = false
+      try? FileManager.default.removeItem(at: fileURL("remote"))
+      mode = "remote"; verificationRequired = true
+      return
     }
     let result = try await request("/state", server: address, token: token)
     try Task.checkCancellation()
@@ -621,6 +636,7 @@ enum SessionKey {
     return url
   }
   func signOut() {
+    verificationRequired = false
     let wasRemote = mode == "remote"
     let server = baseURL
     let token = SessionKey.read()
@@ -638,5 +654,23 @@ enum SessionKey {
     if wasRemote, let token {
       Task { _ = try? await request("/auth/logout", body: [:], server: server, token: token) }
     }
+  }
+}
+
+/// A suspended connection task must never resume against a different signed-in workspace.
+@MainActor struct WorkspaceRequest {
+  let generation: Int
+  let server: String
+  let token: String?
+  init(_ store: Store) { generation = store.workspaceGeneration; server = store.baseURL; token = SessionKey.read() }
+  func check(_ store: Store) throws {
+    try Task.checkCancellation()
+    guard store.mode == "remote", store.workspaceGeneration == generation,
+      store.baseURL == server, SessionKey.read() == token else { throw CancellationError() }
+  }
+  func request(_ store: Store, _ path: String, body: JSON? = nil) async throws -> JSON {
+    try check(store)
+    let result = try await store.request(path, body: body, server: server, token: token)
+    try check(store); return result
   }
 }

@@ -40,6 +40,7 @@ target.build_configurations.each do |config|
     'INFOPLIST_FILE'=>'Asset/Info.plist', 'GENERATE_INFOPLIST_FILE'=>'NO',
     'MARKETING_VERSION'=>'0.1.0', 'CURRENT_PROJECT_VERSION'=>'1',
     'TARGETED_DEVICE_FAMILY'=>'1,2', 'CODE_SIGN_STYLE'=>'Automatic',
+    'DEVELOPMENT_TEAM'=>'J59ZSG67SJ',
     'CODE_SIGN_ENTITLEMENTS'=>'Asset/Asset.entitlements',
     'APS_ENVIRONMENT'=>(config.name == 'Release' ? 'production' : 'development'),
     'ENABLE_USER_SCRIPT_SANDBOXING'=>'YES',
