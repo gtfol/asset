@@ -1830,19 +1830,141 @@ td {
   max-width: 570px;
   color: var(--muted);
 }
-.connection-intro h3 {
-  margin-top: 16px;
-}
-.connection-redirect {
-  margin-top: 24px;
-}
 .connection-card {
-  margin: 22px 0;
-  border-color: var(--border);
-  border: 0;
+  margin: 0;
   border-top: 1px solid var(--border);
-  border-radius: 0;
-  padding: 16px 0;
+  padding-top: 20px;
+}
+.connections-dialog[open] {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.connections-dialog > header {
+  flex-shrink: 0;
+}
+.connections-dialog .dialog-body {
+  display: grid;
+  min-height: 0;
+  overflow-y: auto;
+  gap: 24px;
+}
+.connection-intro,
+.connection-section,
+.connection-card,
+.venmo-route {
+  display: grid;
+  min-width: 0;
+  gap: 12px;
+}
+.connections-dialog :is(h3, h4, p, label, ol) {
+  margin: 0;
+}
+.connection-intro {
+  gap: 4px;
+}
+.connections-dialog .connection-card > h3 + p,
+.connections-dialog .connection-meta {
+  margin-top: -8px;
+}
+.connection-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+.connections-dialog form {
+  display: grid;
+  gap: 12px;
+}
+.connections-dialog .form-grid {
+  row-gap: 12px;
+}
+.connections-dialog button:not(.icon-button) {
+  min-height: 40px;
+  font-size: 13px;
+}
+.connection-card > button,
+.connection-section > button,
+.venmo-route > button,
+.connections-dialog form > button {
+  justify-self: start;
+}
+.connection-card > .check-label {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+}
+.connections-dialog .check-label input {
+  width: 16px;
+  height: 16px;
+}
+.connection-account-name {
+  overflow-wrap: anywhere;
+}
+.connection-account-balance {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.connection-card .button-row {
+  gap: 8px 16px;
+  margin-top: 4px;
+}
+.connections-dialog .border-button {
+  font-weight: 400;
+  padding: 7px 10px;
+}
+.connection-disclosure > summary {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 0;
+  cursor: pointer;
+  list-style: none;
+  font-size: 13px;
+}
+.connection-disclosure > summary::-webkit-details-marker {
+  display: none;
+}
+.connection-disclosure > summary::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  flex: 0 0 6px;
+  border-right: 1px solid currentColor;
+  border-bottom: 1px solid currentColor;
+  transform: rotate(-45deg);
+}
+.connection-disclosure[open] > summary::before {
+  transform: rotate(45deg);
+}
+.connection-disclosure > summary:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+.connection-disclosure[open] > summary {
+  margin-bottom: 8px;
+}
+.venmo-heading {
+  font-size: 13px;
+  font-weight: 400;
+}
+.venmo-address {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.venmo-address label {
+  flex: 1 1 240px;
+  min-width: 0;
+}
+.venmo-steps li + li {
+  margin-top: 6px;
+}
+.venmo-receipts p + p {
+  margin-top: 6px;
 }
 .welcome {
   min-height: 100vh;
@@ -2496,7 +2618,10 @@ dialog label {
   margin-left: 6px;
 }
 
-.venmo-route,
+.venmo-route {
+  border-top: 1px solid var(--border);
+  padding-top: 16px;
+}
 .venmo-review {
   border-top: 1px solid var(--border);
   padding: 1rem 0;

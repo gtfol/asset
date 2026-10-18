@@ -28,7 +28,7 @@ export function AccountLinks({ state, run, disabled }: { state: State; run: Run;
     <h3>Imported history</h3>
     <p className="tiny muted">Link CSV history to the same bank account. Your account name, categories, notes, and older transactions stay with its live balance.</p>
     {complete && <p role="status">{complete}</p>}
-    {!open ? <button disabled={disabled} onClick={() => {
+    {!open ? <button className="border-button" disabled={disabled} onClick={() => {
       setMapping(Object.fromEntries(imported.map(a => {
         const matches = candidates(a.id).filter(c => a.mask && c.mask === a.mask);
         return [a.id, matches.length === 1 ? matches[0].id : ''];
@@ -56,7 +56,7 @@ export function AccountLinks({ state, run, disabled }: { state: State; run: Run;
           } catch (e) { setError((e as Error).message); }
           finally { setBusy(false); }
         }}>{busy ? 'Linking…' : 'Link selected accounts'}</button>
-        <button disabled={busy} onClick={() => setOpen(false)}>Cancel</button>
+        <button className="border-button" disabled={busy} onClick={() => setOpen(false)}>Cancel</button>
       </div>
       {(error || previewError) && <p role="alert" className="negative">{error || previewError}</p>}
     </>}

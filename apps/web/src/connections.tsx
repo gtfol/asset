@@ -295,7 +295,13 @@ export function ConnectionsDialog({
   }
 
   return (
-    <Modal title="Connections" onClose={close} wide suspended={linkOpen}>
+    <Modal
+      title="Connections"
+      onClose={close}
+      wide
+      suspended={linkOpen}
+      className="connections-dialog"
+    >
       <div className="connection-intro">
         <h3>Connect with your Plaid account.</h3>
         <p>
@@ -313,7 +319,7 @@ export function ConnectionsDialog({
           {configLoading ? (
             <p className="muted">Loading connection settings…</p>
           ) : config ? (
-            <section>
+            <section className="connection-section">
               <h3>Plaid credentials</h3>
               {config.configured && (
                 <p className="tiny muted">
@@ -392,7 +398,7 @@ export function ConnectionsDialog({
                   {config.configured && (
                     <button
                       type="button"
-                      className="text-button negative"
+                      className="border-button negative"
                       disabled={locked || hasConnections}
                       onClick={() => void credentials(true)}
                     >
@@ -425,10 +431,12 @@ export function ConnectionsDialog({
               )}
             </section>
           ) : (
-            <button onClick={close}>Close and try again</button>
+            <button className="border-button" onClick={close}>
+              Close and try again
+            </button>
           )}
           {(configured || attempt) && (
-            <section>
+            <section className="connection-section">
               <label>
                 Connection type
                 <select
@@ -459,7 +467,7 @@ export function ConnectionsDialog({
                         diagnostics.current.event(attempt.id, name, metadata);
                     }}
                   />
-                  <button disabled={!!busy} onClick={discardAttempt}>
+                  <button className="border-button" disabled={!!busy} onClick={discardAttempt}>
                     Cancel connection
                   </button>
                 </div>
@@ -481,7 +489,7 @@ export function ConnectionsDialog({
       <AccountLinks state={state} run={run} disabled={locked} />
       {connections.map((c) => (
         <section className="connection-card" key={c.id}>
-          <div className="detail-heading">
+          <div className="connection-heading">
             <h3>{c.institution_name}</h3>
             <Status
               status={
@@ -493,7 +501,7 @@ export function ConnectionsDialog({
               }
             />
           </div>
-          <p className="tiny muted">
+          <p className="connection-meta tiny muted">
             {c.product}
             {c.environment === 'sandbox' ? ' · Sandbox test data' : ''} · Last fetched{' '}
             {c.last_synced_at ? new Date(c.last_synced_at).toLocaleString() : 'not yet'} ·{' '}
@@ -533,12 +541,19 @@ export function ConnectionsDialog({
                     });
                   }}
                 />
-                {a.name} <span className="muted">{money(a.balance, a.currency)}</span>
+                <span className="connection-account-name">
+                  {a.name}
+                  {a.mask && <small> · {a.mask}</small>}
+                </span>
+                <span className="connection-account-balance muted">
+                  {money(a.balance, a.currency)}
+                </span>
               </label>
             ))}
           {c.status !== 'disconnected' && (
             <div className="button-row">
               <button
+                className="border-button"
                 disabled={locked}
                 onClick={() =>
                   void operate('Checking for updates…', async () => {
@@ -552,11 +567,15 @@ export function ConnectionsDialog({
               >
                 Check for updates
               </button>
-              <button disabled={locked || !configured} onClick={() => void link(c.id)}>
+              <button
+                className="border-button"
+                disabled={locked || !configured}
+                onClick={() => void link(c.id)}
+              >
                 Reauthenticate / add accounts
               </button>
               <button
-                className="text-button negative"
+                className="border-button negative"
                 disabled={locked}
                 onClick={() => {
                   setDisconnecting(c.id);
@@ -592,6 +611,7 @@ export function ConnectionsDialog({
               )}
               <div className="button-row">
                 <button
+                  className="border-button negative"
                   disabled={locked || (remove && confirmation !== 'DELETE')}
                   onClick={() =>
                     void operate('Disconnecting…', async () => {
@@ -606,7 +626,11 @@ export function ConnectionsDialog({
                 >
                   Confirm disconnect{remove ? ' and delete' : ''}
                 </button>
-                <button disabled={locked} onClick={() => setDisconnecting(null)}>
+                <button
+                  className="border-button"
+                  disabled={locked}
+                  onClick={() => setDisconnecting(null)}
+                >
                   Cancel
                 </button>
               </div>

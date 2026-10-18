@@ -116,31 +116,34 @@ export function VenmoConnection({
             <>
               {data.routes.map((r) => (
                 <div className="venmo-route" key={r.id}>
-                  <h4>
+                  <h4 className="venmo-heading">
                     {state.accounts.find((a) => a.id === r.accountId)?.name ?? 'Venmo'} ·{' '}
                     {r.active ? 'Forwarding enabled' : 'Paused'}
                   </h4>
-                  <p className="tiny muted">
+                  <p className="connection-meta tiny muted">
                     Receipts for {r.sourceEmail} · Last received{' '}
                     {r.lastReceivedAt ? new Date(r.lastReceivedAt).toLocaleString() : 'not yet'}
                   </p>
                   {r.address && (
                     <>
-                      <label>
-                        Forwarding address
-                        <input readOnly value={r.address} onFocus={(e) => e.target.select()} />
-                      </label>
-                      <button
-                        disabled={busy}
-                        onClick={() => {
-                          void navigator.clipboard
-                            .writeText(r.address!)
-                            .then(() => setNotice('Address copied.'))
-                            .catch(() => setError('Select and copy the address above.'));
-                        }}
-                      >
-                        Copy address
-                      </button>
+                      <div className="venmo-address">
+                        <label>
+                          Forwarding address
+                          <input readOnly value={r.address} onFocus={(e) => e.target.select()} />
+                        </label>
+                        <button
+                          className="border-button"
+                          disabled={busy}
+                          onClick={() => {
+                            void navigator.clipboard
+                              .writeText(r.address!)
+                              .then(() => setNotice('Address copied.'))
+                              .catch(() => setError('Select and copy the address above.'));
+                          }}
+                        >
+                          Copy address
+                        </button>
+                      </div>
                       <ol className="venmo-steps">
                         <li>
                           In Gmail settings, open Forwarding and POP/IMAP and add this forwarding
@@ -174,7 +177,7 @@ export function VenmoConnection({
                         review.
                       </p>
                       <button
-                        className="text-button"
+                        className="border-button"
                         disabled={busy}
                         onClick={() => void perform(`/${r.id}/pause`, {})}
                       >
@@ -184,7 +187,7 @@ export function VenmoConnection({
                   )}
                 </div>
               ))}
-              <details open={!data.routes.some((r) => r.active)}>
+              <details className="connection-disclosure" open={!data.routes.some((r) => r.active)}>
                 <summary>
                   {data.routes.length
                     ? 'Add or reconnect a Venmo account'
@@ -245,7 +248,7 @@ export function VenmoConnection({
             </>
           )}
           {data && (
-            <button className="text-button" disabled={busy} onClick={() => void perform()}>
+            <button className="border-button" disabled={busy} onClick={() => void perform()}>
               Refresh Venmo
             </button>
           )}
@@ -262,7 +265,7 @@ export function VenmoConnection({
               />
             ))}
           {!!data?.receipts.filter((r) => r.status !== 'review').length && (
-            <details>
+            <details className="connection-disclosure venmo-receipts">
               <summary>Recent receipts</summary>
               {data.receipts
                 .filter((r) => r.status !== 'review')
@@ -427,7 +430,7 @@ function ReceiptReview({
       )}
       <button
         disabled={busy}
-        className="text-button"
+        className="border-button"
         onClick={() => void perform(`/receipts/${r.id}/ignore`, {})}
       >
         Ignore receipt

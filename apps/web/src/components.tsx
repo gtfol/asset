@@ -48,12 +48,14 @@ export function Modal({
   onClose,
   wide = false,
   suspended = false,
+  className = '',
 }: {
   title: string;
   children: React.ReactNode;
   onClose: () => void;
   wide?: boolean;
   suspended?: boolean;
+  className?: string;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
   useLayoutEffect(() => {
@@ -68,7 +70,7 @@ export function Modal({
   return (
     <dialog
       ref={ref}
-      className={wide ? 'wide' : ''}
+      className={[wide ? 'wide' : '', className].filter(Boolean).join(' ')}
       onCancel={(e) => {
         e.preventDefault();
         onClose();
