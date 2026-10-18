@@ -588,7 +588,7 @@ export function ConnectionsDialog({
             </div>
           )}
           {disconnecting === c.id && (
-            <div>
+            <div className="connection-confirmation">
               <p>Future access stops. Imported data stays unless you choose to delete it.</p>
               <label className="check-label">
                 <input

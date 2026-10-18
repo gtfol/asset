@@ -327,7 +327,7 @@ function ReceiptReview({
       t.amount === Math.round(Number(amount) * 100),
   );
   return (
-    <details className="venmo-review">
+    <details className="connection-disclosure venmo-review">
       <summary>{r.subject ?? 'Receipt'} · Review needed</summary>
       <p className="muted">{r.reason}</p>
       {r.text ? (

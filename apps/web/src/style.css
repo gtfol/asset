@@ -1852,6 +1852,7 @@ td {
 .connection-intro,
 .connection-section,
 .connection-card,
+.connection-confirmation,
 .venmo-route {
   display: grid;
   min-width: 0;
@@ -2625,6 +2626,9 @@ dialog label {
 .venmo-review {
   border-top: 1px solid var(--border);
   padding: 1rem 0;
+}
+.venmo-review > :not(summary) {
+  margin-top: 12px;
 }
 .venmo-steps {
   padding-left: 1.4rem;
