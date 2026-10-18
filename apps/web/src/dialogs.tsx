@@ -16,6 +16,7 @@ import {
 import { parseCSV, previewCSV, exportCSV, type CSVOptions } from '../shared/csv';
 import { isCopilotCSV } from '../shared/copilot';
 import { CopilotImport } from './copilot';
+import { HistoryMatches } from './history-matches';
 import { NotificationPreferences } from './notifications';
 import { categoryIcons, categoryIconKey } from '../shared/category-icons';
 import { Modal, Badge, Status, Empty } from './components';
@@ -1121,6 +1122,7 @@ export function SettingsDialog({
   return (
     <Modal title="Settings & data" onClose={onClose}>
       <NotificationPreferences state={state} run={run} />
+      <HistoryMatches state={state} run={run} />
       <label className="theme-control">
         Appearance
         <select

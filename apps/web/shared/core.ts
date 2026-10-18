@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { importCopilot, copilotOptionsSchema, repairCopilotHistory } from './copilot.js';
-import { linkImportedAccount } from './account-links.js';
+import { linkImportedAccount, reconcileHistory } from './account-links.js';
 export * from './account-links.js';
 import {
   notificationPreferences,
@@ -672,6 +672,10 @@ function applyFinancialCommand(input: State, command: Command): State {
           copilotOptionsSchema.parse(p.options),
         ),
       );
+    }
+    case 'import.reconcile-history': {
+      const pairs = z.array(z.object({ importedId: z.string(), providerId: z.string() })).max(10000).parse(p.pairs);
+      return validateState(reconcileHistory(s, pairs));
     }
     case 'import.copilotReview': {
       return validateState(

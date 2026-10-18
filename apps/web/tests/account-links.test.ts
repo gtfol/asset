@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { applyCommand, fingerprint, previewAccountLink, validateState } from '../shared/core';
+import { applyCommand, fingerprint, previewAccountLink, previewHistoryMatches, importedMatch, validateState } from '../shared/core';
 import { importCopilot, previewCopilot } from '../shared/copilot';
 import { applyProviderRecords, type Connection } from '../server/plaid';
 import { fixture, transaction } from './fixtures';
@@ -76,5 +76,82 @@ describe('linking imported accounts', () => {
     expect(preview.accounts).toHaveLength(0);
     expect(preview.duplicates).toBe(1);
     expect(s.transactions).toHaveLength(1);
+  });
+});
+
+describe('matching previously synced history', () => {
+  function history() {
+    const s = accounts();
+    s.accounts = [{ ...s.accounts[1], id: 'a' }];
+    s.transactions = [
+      transaction('csv', 6074, { name: 'Safeway', source: 'csv', date: '2024-02-13', reviewed: true,
+        importIdentity: 'copilot:["account","2024-02-13","Safeway",6074,"spending"]:1',
+        categoryId: 'food', notes: 'My note', excluded: true, tags: 'Groceries' }),
+      transaction('bank', 6074, { name: 'SAFEWAY', source: 'plaid', providerId: 't1', connectionId: 'c',
+        categoryId: 'other', raw: { amount: 60.74 } }),
+    ];
+    return s;
+  }
+  it('matches shifted posting dates, preserves CSV decisions, and attaches future syncs to one row', () => {
+    const s = history();
+    const pairs = previewHistoryMatches(s);
+    expect(pairs).toEqual([{ importedId: 'csv', providerId: 'bank' }]);
+    const next = applyCommand(s, { type: 'import.reconcile-history', payload: { pairs } });
+    expect(next.transactions).toHaveLength(1);
+    expect(next.transactions[0]).toMatchObject({ id: 'csv', providerId: 't1', reviewed: true, notes: 'My note',
+      tags: 'Groceries', edits: { name: 'Safeway', date: '2024-02-13', excluded: true, categoryId: 'food' } });
+    expect(next.accounts).toEqual(s.accounts);
+    expect(previewHistoryMatches(next)).toEqual([]);
+    expect(() => applyCommand(next, { type: 'import.reconcile-history', payload: { pairs } })).toThrow('Matches changed');
+    applyProviderRecords(next, { id: 'c', historical_complete: true } as Connection, { added: [], modified: [{
+      transaction_id: 't1', account_id: 'p', name: 'SAFEWAY STORE', date: '2024-02-15', amount: 60.74, pending: false,
+    }], removed: [] });
+    expect(next.transactions).toHaveLength(1);
+    expect(next.transactions[0].reviewed).toBe(true);
+    expect(next.transactions[0].edits.categoryId).toBe('food');
+  });
+  it('ignores opposite-direction transfers, unrelated merchants, changed amounts and distant dates', () => {
+    const s = history();
+    for (const change of [{ name: 'Other shop' }, { amount: 6075 }, { date: '2024-02-21' }, { accountId: 'other' }, { currency: 'CAD' }]) {
+      const copy = structuredClone(s); Object.assign(copy.transactions[1], change);
+      expect(previewHistoryMatches(copy)).toEqual([]);
+    }
+    s.transactions[0].kind = 'transfer';
+    s.transactions[1].kind = 'transfer'; s.transactions[1].raw = { amount: -60.74 };
+    expect(previewHistoryMatches(s)).toEqual([]);
+    expect(importedMatch(s.transactions, s.transactions[1])).toBeUndefined();
+  });
+  it('recognizes cleaned ACH descriptions without matching amount alone', () => {
+    const s = history();
+    s.transactions[0].name = 'Citi Autopay Payment Lin Co'; s.transactions[0].kind = 'transfer';
+    s.transactions[1].name = 'CITI AUTOPAY DES:PAYMENT ID:XXXXXXXX50038 INDN:ALLEN LIN CO ID:CITICARDAP WEB';
+    s.transactions[1].kind = 'card_payment';
+    expect(previewHistoryMatches(s)).toHaveLength(1);
+    s.transactions[1].name = 'CITI CASH PAYMENT';
+    expect(previewHistoryMatches(s)).toHaveLength(0);
+  });
+  it('leaves repeated purchases ambiguous on either side and preserves manually edited bank rows', () => {
+    const s = history();
+    const duplicate = { ...s.transactions[0], id: 'csv2', date: '2024-02-14' };
+    s.transactions.push(duplicate);
+    expect(previewHistoryMatches(s)).toEqual([]);
+    s.transactions.pop();
+    s.transactions.push({ ...s.transactions[1], id: 'bank2', providerId: 't2' });
+    expect(previewHistoryMatches(s)).toEqual([]);
+    expect(importedMatch(s.transactions, s.transactions[1])).toBeUndefined();
+    s.transactions.pop(); s.transactions[1].edits = { categoryId: 'food' };
+    expect(previewHistoryMatches(s)).toEqual([]);
+    s.transactions[1].edits = {}; s.transactions[1].pending = true;
+    expect(previewHistoryMatches(s)).toEqual([]);
+  });
+  it('reconciles new bank activity on arrival and rejects forged or repeated pair IDs atomically', () => {
+    const s = history();
+    const incoming = s.transactions.pop()!;
+    expect(importedMatch(s.transactions, incoming)?.id).toBe('csv');
+    s.transactions.push(incoming);
+    const pair = previewHistoryMatches(s)[0];
+    expect(() => applyCommand(s, { type: 'import.reconcile-history', payload: { pairs: [pair, pair] } })).toThrow('Matches changed');
+    expect(() => applyCommand(s, { type: 'import.reconcile-history', payload: { pairs: [{ ...pair, providerId: 'foreign' }] } })).toThrow('Matches changed');
+    expect(s.transactions).toHaveLength(2);
   });
 });
