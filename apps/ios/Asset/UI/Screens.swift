@@ -29,93 +29,120 @@ struct TransactionsView: View {
   }
   var body: some View {
     let loadedCount = page.loadedCount
-    List {
-      Section {
-        HStack {
+    VStack(spacing: 0) {
+      VStack(alignment: .leading, spacing: 8) {
+        HStack(spacing: 8) {
+          Image(systemName: "magnifyingglass").foregroundStyle(Color.assetSecondary)
+          TextField("Search transactions", text: $query,
+            prompt: Text("Search merchants and notes").foregroundStyle(Color.assetSecondary))
+            .textInputAutocapitalization(.never).autocorrectionDisabled()
+            .accessibilityLabel("Search transactions")
+          if !query.isEmpty {
+            Button { query = "" } label: {
+              Image(systemName: "xmark").frame(width: 44, height: 44)
+            }.accessibilityLabel("Clear search")
+          }
+        }.padding(.leading, 12).padding(.trailing, query.isEmpty ? 12 : 0)
+          .frame(minHeight: 44)
+          .overlay(RoundedRectangle(cornerRadius: 2).stroke(Color.assetDivider, lineWidth: 1))
+        HStack(spacing: 12) {
           Button(reviewOnly ? "To Review" : "All transactions") {
             reviewOnly.toggle()
-          }
+          }.frame(minHeight: 44)
           Spacer()
           Button {
             showFilters = true
           } label: {
-            Image(systemName: "line.3.horizontal.decrease")
+            Image(systemName: "line.3.horizontal.decrease").frame(width: 44, height: 44)
           }.accessibilityLabel("Filter transactions")
-          Button(selecting ? "Done" : "Select") {
-            selecting.toggle()
-            selected = []
+          if page.total > 0 || selecting {
+            Button(selecting ? "Done" : "Select") {
+              selecting.toggle()
+              selected = []
+            }.frame(minHeight: 44)
           }
-        }.buttonStyle(.borderless)
-        Text("\(page.total) matching transactions").font(
-          .custom("Lato-Regular", size: 13, relativeTo: .caption)
-        ).foregroundStyle(Color.assetSecondary)
-      }
-      if selecting {
-        Section {
-          Button("Select \(page.loadedCount) loaded transactions") {
-            selected = page.loadedIDs
-          }.disabled(page.loadedCount == 0)
-          Button(reviewing ? "Reviewing selected…" : "Review selected (\(selected.count))") {
-            reviewSelected()
-          }.disabled(selected.isEmpty || reviewing || store.busy)
         }
-      }
-      ForEach(page.groups) { group in
-        Section {
-          ForEach(group.rows) { t in
-            if selecting {
-              Button {
-                if selected.contains(t.id) { selected.remove(t.id) } else { selected.insert(t.id) }
-              } label: {
-                HStack {
-                  Image(systemName: selected.contains(t.id) ? "checkmark.circle.fill" : "circle")
+        if page.total > 0 {
+          Text("\(page.total) transactions").font(
+            .custom("Lato-Regular", size: 13, relativeTo: .caption)
+          ).foregroundStyle(Color.assetSecondary).padding(.bottom, 8)
+        }
+      }.font(.custom("Lato-Regular", size: 15, relativeTo: .subheadline))
+        .buttonStyle(.plain).padding(.horizontal, 20).padding(.top, 12)
+      List {
+        if selecting {
+          Section {
+            Button("Select \(page.loadedCount) loaded transactions") {
+              selected = page.loadedIDs
+            }.disabled(page.loadedCount == 0)
+            Button(reviewing ? "Reviewing selected…" : "Review selected (\(selected.count))") {
+              reviewSelected()
+            }.disabled(selected.isEmpty || reviewing || store.busy)
+          }
+        }
+        ForEach(page.groups) { group in
+          Section {
+            ForEach(group.rows) { t in
+              if selecting {
+                Button {
+                  if selected.contains(t.id) { selected.remove(t.id) } else { selected.insert(t.id) }
+                } label: {
+                  HStack {
+                    Image(systemName: selected.contains(t.id) ? "checkmark.circle.fill" : "circle")
+                    TransactionLine(tx: t)
+                  }
+                }.buttonStyle(.plain)
+              } else {
+                NavigationLink {
+                  TransactionForm(transaction: t)
+                } label: {
                   TransactionLine(tx: t)
+                }.swipeActions {
+                  Button("Review", systemImage: "checkmark") {
+                    store.perform("transactions.review", ["ids": [t.id], "reviewed": true])
+                  }.tint(.assetText)
                 }
-              }.buttonStyle(.plain)
-            } else {
-              NavigationLink {
-                TransactionForm(transaction: t)
-              } label: {
-                TransactionLine(tx: t)
-              }.swipeActions {
-                Button("Review", systemImage: "checkmark") {
-                  store.perform("transactions.review", ["ids": [t.id], "reviewed": true])
-                }.tint(.assetText)
               }
             }
+          } header: {
+            Text(group.id)
+              .font(.custom("Lato-Regular", size: 13, relativeTo: .caption))
+              .foregroundStyle(Color.assetSecondary)
+              .frame(maxWidth: .infinity, alignment: .leading)
+              .padding(.horizontal, 20).padding(.vertical, 8)
+              .background(Color.assetBackground)
+              .listRowInsets(EdgeInsets())
+              .textCase(nil)
           }
-        } header: {
-          Text(group.id)
+        }
+        if page.hasMore {
+          ProgressView("Loading more transactions…")
             .font(.custom("Lato-Regular", size: 13, relativeTo: .caption))
             .foregroundStyle(Color.assetSecondary)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 20).padding(.vertical, 8)
-            .background(Color.assetBackground)
-            .listRowInsets(EdgeInsets())
-            .textCase(nil)
+            .frame(maxWidth: .infinity, minHeight: 44)
+            .id(loadedCount)
+            .task {
+              await Task.yield()
+              guard !Task.isCancelled, loadedCount == page.loadedCount,
+                appliedFilters == filters, snapshotGeneration == store.stateGeneration
+              else { return }
+              page.loadMore()
+            }
         }
-      }
-      if page.hasMore {
-        ProgressView("Loading more transactions…")
-          .font(.custom("Lato-Regular", size: 13, relativeTo: .caption))
-          .foregroundStyle(Color.assetSecondary)
-          .frame(maxWidth: .infinity, minHeight: 44)
-          .id(loadedCount)
-          .task {
-            await Task.yield()
-            guard !Task.isCancelled, loadedCount == page.loadedCount,
-              appliedFilters == filters, snapshotGeneration == store.stateGeneration
-            else { return }
-            page.loadMore()
-          }
-      }
-      if initialized && page.total == 0 {
-        ContentUnavailableView(
-          "No matching transactions", systemImage: "magnifyingglass",
-          description: Text("Try another filter, import a CSV, or add a transaction."))
-      }
-    }.listStyle(.plain).scrollContentBackground(.hidden).background(Color.assetBackground)
-      .searchable(text: $query, prompt: "Search merchants and notes")
+        if initialized && page.total == 0 {
+          AssetEmptyState(
+            title: store.transactions.isEmpty ? "No transactions yet" : "No matching transactions",
+            message: store.transactions.isEmpty
+              ? "Add a transaction with +, or import a CSV from Settings."
+              : "Try a different search or filter.")
+            .listRowSeparator(.hidden)
+            .listRowInsets(EdgeInsets(top: 8, leading: 20, bottom: 8, trailing: 20))
+        }
+      }.listStyle(.plain).scrollContentBackground(.hidden)
+        .font(.custom("Lato-Regular", size: 15, relativeTo: .subheadline))
+        .environment(\.defaultMinListRowHeight, 44)
+        .scrollDismissesKeyboard(.interactively)
+    }.background(Color.assetBackground)
       .assetTitle("Transactions")
       .onAppear {
         if !initialized {
@@ -312,77 +339,71 @@ struct CategoryDetail: View {
 struct AccountsView: View {
   @EnvironmentObject var store: Store
   @State var range = "1Y"
-  @State var addBitcoin = false
   var body: some View {
     let w = store.calculation("netWorth")
     ScrollView {
       VStack(spacing: 16) {
-        Button("Track Bitcoin address") { addBitcoin = true }
-          .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-          .disabled(store.mode != "remote" || store.isDemo)
-        if store.mode != "remote" { Text("Sign in to track live Bitcoin balances.").font(.caption).foregroundStyle(Color.assetSecondary) }
-        if !store.bitcoinError.isEmpty { Text(store.bitcoinError).foregroundStyle(Color.assetError) }
-        Card(title: "Net worth") {
-          Metric(
-            title: "\(store.currency) · assets minus debt",
-            value: money(w.data["total"], store.currency))
-          HistoryChart(
-            points: historyPoints(w.rows("history").filter { $0.flag("complete") }, range: range),
-            currency: store.currency)
-          RangePicker(range: $range)
-          HStack {
-            Metric(title: "Assets", value: money(w.data["assets"], store.currency))
-            Spacer()
-            Metric(title: "Debt", value: money(w.data["debt"], store.currency))
+        if store.accounts.isEmpty {
+          AssetEmptyState(title: "No accounts yet", message: "Use + to add an account or Bitcoin wallet.")
+        } else {
+          if !store.bitcoinError.isEmpty { Text(store.bitcoinError).foregroundStyle(Color.assetError) }
+          Card(title: "Net worth") {
+            Metric(
+              title: "\(store.currency) · assets minus debt",
+              value: money(w.data["total"], store.currency))
+            HistoryChart(
+              points: historyPoints(w.rows("history").filter { $0.flag("complete") }, range: range),
+              currency: store.currency)
+            RangePicker(range: $range)
+            HStack {
+              Metric(title: "Assets", value: money(w.data["assets"], store.currency))
+              Spacer()
+              Metric(title: "Debt", value: money(w.data["debt"], store.currency))
+            }
+            if !w.flag("complete") {
+              Text("Some included account balances are unavailable.").font(
+                .custom("Lato-Regular", size: 13, relativeTo: .caption)
+              ).foregroundStyle(Color.assetAmber)
+            }
+            if store.accounts.contains(where: { $0.text("currency") != store.currency }) {
+              Text("Other currencies are excluded from this total. No conversion is assumed.").font(
+                .custom("Lato-Regular", size: 13, relativeTo: .caption)
+              ).foregroundStyle(Color.assetSecondary)
+            }
           }
-          if !w.flag("complete") {
-            Text("Some included account balances are unavailable.").font(
-              .custom("Lato-Regular", size: 13, relativeTo: .caption)
-            ).foregroundStyle(Color.assetAmber)
-          }
-          if store.accounts.contains(where: { $0.text("currency") != store.currency }) {
-            Text("Other currencies are excluded from this total. No conversion is assumed.").font(
-              .custom("Lato-Regular", size: 13, relativeTo: .caption)
-            ).foregroundStyle(Color.assetSecondary)
-          }
-        }
-        ForEach(["checking", "savings", "credit", "investment", "loan", "manual"], id: \.self) {
-          type in
-          let accounts = store.accounts.filter { $0.text("type") == type }
-          if !accounts.isEmpty {
-            Card(title: type == "credit" ? "Credit cards" : type.capitalized) {
-              ForEach(accounts) { a in
-                NavigationLink {
-                  AccountDetail(accountID: a.id)
-                } label: {
-                  HStack {
-                    Image(systemName: "building.columns").foregroundStyle(Color.assetSecondary)
-                      .frame(
-                        width: 30)
-                    VStack(alignment: .leading, spacing: 5) {
-                      Text(a.text("name")).font(
-                        .custom("Lato-Regular", size: 15, relativeTo: .subheadline))
-                      Text("\(a.text("source")) · \(a.text("mask",a.text("currency")))").font(
-                        .custom("Lato-Regular", size: 12, relativeTo: .caption2)
-                      ).foregroundStyle(Color.assetSecondary)
-                    }
-                    Spacer()
-                    Text(money(a.data["balance"], a.text("currency"))).font(
-                      .custom("Lato-Regular", size: 15, relativeTo: .subheadline)
-                    ).monospacedDigit()
-                  }.padding(.vertical, 8)
-                }.buttonStyle(.plain)
+          ForEach(["checking", "savings", "credit", "investment", "loan", "manual"], id: \.self) {
+            type in
+            let accounts = store.accounts.filter { $0.text("type") == type }
+            if !accounts.isEmpty {
+              Card(title: type == "credit" ? "Credit cards" : type.capitalized) {
+                ForEach(accounts) { a in
+                  NavigationLink {
+                    AccountDetail(accountID: a.id)
+                  } label: {
+                    HStack {
+                      Image(systemName: "building.columns").foregroundStyle(Color.assetSecondary)
+                        .frame(
+                          width: 30)
+                      VStack(alignment: .leading, spacing: 5) {
+                        Text(a.text("name")).font(
+                          .custom("Lato-Regular", size: 15, relativeTo: .subheadline))
+                        Text("\(a.text("source")) · \(a.text("mask",a.text("currency")))").font(
+                          .custom("Lato-Regular", size: 12, relativeTo: .caption2)
+                        ).foregroundStyle(Color.assetSecondary)
+                      }
+                      Spacer()
+                      Text(money(a.data["balance"], a.text("currency"))).font(
+                        .custom("Lato-Regular", size: 15, relativeTo: .subheadline)
+                      ).monospacedDigit()
+                    }.padding(.vertical, 8)
+                  }.buttonStyle(.plain)
+                }
               }
             }
           }
         }
-        if store.accounts.isEmpty {
-          ContentUnavailableView(
-            "No accounts yet", systemImage: "building.columns",
-            description: Text("Tap + to add a manual account, or open Connections in Settings."))
-        }
       }.padding(20)
-    }.sheet(isPresented: $addBitcoin) { BitcoinAddressForm() }
+    }
   }
 }
 struct AccountDetail: View {

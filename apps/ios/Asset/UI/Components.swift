@@ -53,6 +53,18 @@ struct AssetBorderButtonStyle: ButtonStyle {
       .contentShape(Rectangle()).opacity(isEnabled ? 1 : 0.5)
   }
 }
+struct AssetEmptyState: View {
+  let title: String
+  let message: String
+  var body: some View {
+    VStack(alignment: .leading, spacing: 8) {
+      Text(title).font(.custom("Lato-Regular", size: 15, relativeTo: .subheadline))
+        .foregroundStyle(Color.assetText)
+      Text(message).font(.custom("Lato-Regular", size: 13, relativeTo: .caption))
+        .foregroundStyle(Color.assetSecondary).lineSpacing(3)
+    }.frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 24)
+  }
+}
 struct Card<Content: View>: View {
   var title: String = ""
   @ViewBuilder var content: Content
@@ -232,10 +244,8 @@ struct HistoryChart: View {
   var body: some View {
     VStack(spacing: 8) {
       if points.isEmpty {
-        ContentUnavailableView(
-          "History not available", systemImage: "chart.xyaxis.line",
-          description: Text("Recorded snapshots will appear here.")
-        ).font(.custom("Lato-Regular", size: 13, relativeTo: .caption)).frame(height: 170)
+        AssetEmptyState(
+          title: "No history yet", message: "Recorded balances will appear here.")
       } else {
         Chart {
           ForEach(points) { p in
@@ -403,7 +413,7 @@ struct TransactionLine: View {
       let c = store.category(id: tx.text("categoryId")) ?? Row()
       CategoryIcon(category: c)
       VStack(alignment: .leading, spacing: 4) {
-        Text(tx.text("name")).font(.custom("Lato-Medium", size: 15, relativeTo: .subheadline))
+        Text(tx.text("name")).font(.custom("Lato-Regular", size: 15, relativeTo: .subheadline))
         Text(store.account(id: tx.text("accountId"))?.text("name") ?? "Account")
           .font(.custom("Lato-Regular", size: 12, relativeTo: .caption2)).foregroundStyle(
             Color.assetSecondary)

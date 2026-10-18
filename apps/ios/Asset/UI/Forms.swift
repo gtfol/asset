@@ -22,7 +22,7 @@ struct FormShell<Content: View>: View {
         if !error.isEmpty { Section { Text(error).foregroundStyle(Color.assetError) } }
       }.assetTitle(title).navigationBarTitleDisplayMode(.inline).navigationBarBackButtonHidden(true)
         .toolbar {
-          ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+          ToolbarItem(placement: .topBarLeading) { Button("Cancel") { dismiss() } }
             .quietBackground()
           ToolbarItem(placement: .confirmationAction) {
             Button(saving ? "Saving…" : "Save") {
@@ -56,6 +56,33 @@ struct SplitDraft: Identifiable {
   var category = "other"
   var amount = "0.00"
   var excluded = false
+}
+struct TransactionSetupView: View {
+  @EnvironmentObject var store: Store
+  @Environment(\.dismiss) private var dismiss
+  @State private var addAccount = false
+  var body: some View {
+    Group {
+      if store.accounts.isEmpty {
+        NavigationStack {
+          VStack(alignment: .leading, spacing: 16) {
+            Text("Add an account to record this transaction.").foregroundStyle(Color.assetSecondary)
+            Button("Add account") { addAccount = true }.buttonStyle(AssetBorderButtonStyle())
+            Spacer()
+          }.font(.custom("Lato-Regular", size: 15, relativeTo: .subheadline))
+            .padding(20).frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.assetBackground).assetTitle("Add transaction")
+            .toolbar {
+              ToolbarItem(placement: .cancellationAction) {
+                Button("Cancel") { dismiss() }
+              }.quietBackground()
+            }
+        }
+      } else {
+        TransactionForm()
+      }
+    }.sheet(isPresented: $addAccount) { AccountForm() }
+  }
 }
 struct TransactionForm: View {
   @EnvironmentObject var store: Store
@@ -237,13 +264,43 @@ struct TransactionForm: View {
     }
   }
 }
+struct BitcoinWalletSetupView: View {
+  @EnvironmentObject var store: Store
+  @Environment(\.dismiss) private var dismiss
+  @State private var signIn = false
+  var body: some View {
+    Group {
+      if store.mode == "remote" && !store.isDemo {
+        BitcoinAddressForm()
+      } else {
+        NavigationStack {
+          VStack(alignment: .leading, spacing: 16) {
+            Text("Sign in to track a Bitcoin wallet’s balance and history.")
+              .foregroundStyle(Color.assetSecondary)
+            Button("Sign in") { signIn = true }.buttonStyle(AssetBorderButtonStyle())
+            Spacer()
+          }.font(.custom("Lato-Regular", size: 15, relativeTo: .subheadline))
+            .padding(20).frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.assetBackground).assetTitle("Bitcoin wallet")
+            .toolbar {
+              ToolbarItem(placement: .cancellationAction) {
+                Button("Cancel") { dismiss() }
+              }.quietBackground()
+            }
+        }
+      }
+    }.sheet(isPresented: $signIn) {
+      SyncSignInView().presentationDetents([.medium, .large])
+    }
+  }
+}
 struct BitcoinAddressForm: View {
   @EnvironmentObject var store: Store
   @State var name = ""
   @State var address = ""
   var body: some View {
     FormShell(
-      title: "Track Bitcoin address",
+      title: "Add Bitcoin wallet",
       save: {
         try await store.bitcoinRequest(
           "/bitcoin/wallets", body: ["name": name, "address": address])

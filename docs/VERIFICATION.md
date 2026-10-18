@@ -1,5 +1,11 @@
 # Verification record
 
+## October 18: native layout and add menu
+
+The native + button now opens the same five actions on every tab: transaction, account, Bitcoin wallet, holding, and category. Adding a transaction before an account exists offers account creation first. Bitcoin setup is available through + instead of a standalone Accounts section. Dashboard no longer repeats its title or introductory copy. Transactions uses regular Lato at 15pt, 13pt supporting text, a compact search field, and quiet empty states. Empty Accounts no longer shows a zero-balance chart and two oversized empty-state panels. Dynamic Type scaling remains enabled.
+
+The simulator build and signed **0.1.0 (3)** archive pass. Dashboard, Transactions, Accounts, the global menu on Dashboard and Accounts, the transaction account prerequisite, the Bitcoin sign-in prerequisite, and category routing were visually inspected. The last pass found a missing Cancel control in the shared editor; its placement is now explicitly leading. That final visual recheck, larger text, and dark appearance remain pending because the Mac locked. The build 3 upload failed to read Xcode's saved login token while locked; build 2 remains the available TestFlight build.
+
 ## October 18: local workspaces and legal pages
 
 Both apps open into an empty workspace without a demo or sign-in gate. Web edits persist in IndexedDB; iOS uses an atomic, protected workspace file. Optional Google sync adds local records to the existing account and queues later edits with owner checks, conflict detection, and idempotent retries. Browser tabs serialize local writes. Import timestamps and holding snapshot dates remain stable through delayed retries. Old native synced caches require one successful connection before editing after migration.

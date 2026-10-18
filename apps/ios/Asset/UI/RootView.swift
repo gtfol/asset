@@ -7,6 +7,7 @@ struct RootView: View {
   @State var month = String(dateToday().prefix(7))
   @State var settings = false
   @State var add = false
+  @State private var addAction = "transaction"
   @State var notifications = false
   let pages = ["Dashboard", "Transactions", "Accounts", "Investments", "Categories", "Cash Flow"]
   var body: some View {
@@ -72,23 +73,26 @@ struct RootView: View {
                 }.accessibilityLabel("Notifications").tint(.assetText)
               }.quietBackground()
               ToolbarItem(placement: .topBarTrailing) {
-                Button {
-                  add = true
+                Menu {
+                  Button("Add transaction") { create("transaction") }
+                  Button("Add account") { create("account") }
+                  Button("Add Bitcoin wallet") { create("bitcoin") }
+                  Button("Add holding") { create("holding") }
+                  Button("Add category") { create("category") }
                 } label: {
                   Image(systemName: "plus")
-                }.accessibilityLabel(
-                  "Add \(page=="Accounts" ? "account" : page=="Categories" ? "category" : page=="Investments" ? "holding" : "transaction")"
-                ).tint(.assetText)
+                }.accessibilityLabel("Add").tint(.assetText)
               }.quietBackground()
             }
             .sheet(isPresented: $settings) { SettingsView() }
             .sheet(isPresented: $notifications) { NotificationInbox() }
             .sheet(isPresented: $add) {
-              switch page {
-              case "Accounts": AccountForm()
-              case "Categories": CategoryForm()
-              case "Investments": HoldingForm()
-              default: if store.accounts.isEmpty { AccountForm() } else { TransactionForm() }
+              switch addAction {
+              case "account": AccountForm()
+              case "bitcoin": BitcoinWalletSetupView()
+              case "category": CategoryForm()
+              case "holding": HoldingForm()
+              default: TransactionSetupView()
               }
             }
             .task { await store.refresh() }
@@ -113,32 +117,36 @@ struct RootView: View {
       Text(store.error)
     }
   }
+  private func create(_ action: String) {
+    addAction = action
+    add = true
+  }
 }
 struct DashboardView: View {
   @EnvironmentObject var store: Store
   @Binding var month: String
   @State var reviewAll = false
   @State private var addAccount = false
+  @State private var addBitcoin = false
   var body: some View {
     let d = store.calculation("dashboard", [month])
     let w = store.calculation("netWorth")
     let review = store.transactions.filter { !$0.flag("reviewed") }
     ScrollView {
       VStack(spacing: 16) {
-        HStack {
-          Text("Dashboard").font(.custom("Lato-Regular", size: 20, relativeTo: .title3))
-          Spacer()
-
-        }
         if store.accounts.isEmpty {
-          VStack(alignment: .leading, spacing: 18) {
-            Text("Your finances, in one place.").font(.custom("Lato-Regular", size: 24))
-            Text("Add an account or import your transactions to get started.").foregroundStyle(Color.assetSecondary)
-            Button("Add an account") { addAccount = true }.buttonStyle(AssetBorderButtonStyle())
+          VStack(alignment: .leading, spacing: 16) {
+            Menu {
+              Button("Manual account") { addAccount = true }
+              Button("Bitcoin wallet") { addBitcoin = true }
+            } label: { Text("Add an account") }
+              .buttonStyle(AssetBorderButtonStyle())
             NavigationLink("Import transactions") { ImportView() }
-            Text("Saved on this device. Sync anytime from Settings.").font(.custom("Lato-Regular", size: 13)).foregroundStyle(Color.assetSecondary)
-          }.frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 28)
+              .frame(minHeight: 44)
+          }.font(.custom("Lato-Regular", size: 15, relativeTo: .subheadline))
+            .frame(maxWidth: .infinity, alignment: .leading)
             .sheet(isPresented: $addAccount) { AccountForm() }
+            .sheet(isPresented: $addBitcoin) { BitcoinWalletSetupView() }
         } else {
         MonthPicker(month: $month)
         Card(title: "Spending this month") {
