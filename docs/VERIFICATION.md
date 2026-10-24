@@ -4,7 +4,9 @@
 
 `ASSET_ALLOWED_EMAILS` restricts new Google workspaces, new web/iOS sessions, existing cookie/bearer sessions, Plaid jobs and webhooks, Venmo receipt processing, and notification work to explicitly allowed Google identities. Production demo creation is disabled. Blocked browser sessions lose cloud controls while retaining their local records and pending edits. Existing hosted records are not deleted.
 
-The complete 192-test web suite passed, followed by 17 focused access/workspace tests after adding the local-edit preservation check. TypeScript checking passed. Tests cover allowed browser login, rejected Google identities, native callback/code rejection, existing cookie/bearer sessions, exact email matching, empty/invalid configuration, blocked demo creation, paused background work, and preservation of local records. Production and Preview are configured with a single allowed email; deployment verification is recorded separately when complete.
+All 193 web tests and the production build passed in GitHub Actions. Local TypeScript checking and the production build also passed; the initial local bundler stalled while transforming dependencies and was stopped before a successful retry. Tests cover allowed browser login, rejected Google identities, native callback/code rejection, existing cookie/bearer sessions, exact email matching, empty/invalid configuration, blocked demo creation, paused background work, and preservation of local records.
+
+Commit `c77aab9` deployed successfully. Production and Preview have a single allowed email. The deployed demo endpoint returned 410, unauthenticated workspace access returned 401, and the existing owner's browser session reopened and reported Synced. Vercel's existing protection covers deployment URLs other than custom domains. This server change applies to existing iOS builds without a new TestFlight upload. Restricting cloud access does not eliminate repeated full-workspace reads for the allowed owner; reducing those transfers remains separate work.
 
 ## October 18: native layout and add menu
 
