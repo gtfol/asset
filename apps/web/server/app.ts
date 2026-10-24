@@ -7,6 +7,7 @@ import { z } from 'zod';
 import { applyCommand, backup, validateState, type Command } from '../shared/core.js';
 import { createDemo } from '../shared/demo.js';
 import { getState, getSyncState, mutateState, type Database } from './db.js';
+import { commandScope } from './state-scope.js';
 import { authenticated, newSession, readToken, tokenHash } from './auth.js';
 import {
   venmoRoutes,
@@ -221,7 +222,8 @@ export function createApp(
   app.use('/api/venmo', venmoRoutes(db));
   app.get('/api/state', async (req, res) => {
     const known = req.query.ownerId === undefined && req.query.revision === undefined ? undefined
-      : z.object({ ownerId: z.string().min(1).max(200), revision: z.coerce.number().int().min(0).max(2147483647) }).parse(req.query);
+      : z.object({ ownerId: z.string().min(1).max(200), revision: z.coerce.number().int().min(0).max(2147483647),
+        delta: z.literal('1').transform(() => true).optional() }).parse(req.query);
     // A missing encryption key must not make manual financial records inaccessible.
     const configuration = await plaidConfiguration(db, res.locals.owner).catch(() => null);
     res.json({
@@ -233,18 +235,23 @@ export function createApp(
     });
   });
   app.post('/api/sync/command', async (req, res) => {
-    const input = z.object({ ownerId: z.string().uuid(), operation: operationSchema }).parse(req.body);
+    const input = z.object({ ownerId: z.string().uuid(), operation: operationSchema,
+      delta: z.boolean().optional(), revision: z.number().int().min(0).max(2147483647).optional(),
+    }).refine(v => !v.delta || v.revision !== undefined, 'A saved revision is required').parse(req.body);
     if (input.ownerId !== res.locals.owner) {
       res.status(409).json({ error: 'Your sign-in changed. Local changes have not been sent to another account.', code: 'OWNER_CHANGED' });
       return;
     }
     const op = input.operation;
     if (op.command.type === 'backup.restore') throw Error('Restore a backup while online');
-    res.json(await mutateState(db, res.locals.owner, s => {
+    const scope = commandScope(op.command, op);
+    const result = await mutateState(db, res.locals.owner, s => {
       assertWorkspaceChanges(s, op.changes);
       return applyCommand(s, op.command as Command, op.timestamp);
     }, undefined, op.command.type.startsWith('import.') || op.command.type === 'workspace.merge',
-    { id: op.id, hash: tokenHash(stableJSON(op)) }));
+    { id: op.id, hash: tokenHash(stableJSON(op)) }, scope);
+    res.json(input.delta ? await getSyncState(db, res.locals.owner, { ownerId: input.ownerId, revision: input.revision!, delta: true })
+      : scope ? await getState(db, res.locals.owner) : result);
   });
   app.post('/api/command', async (req, res) => {
     const c = z

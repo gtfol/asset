@@ -38,7 +38,7 @@ target.build_configurations.each do |config|
   config.build_settings.merge!({
     'PRODUCT_BUNDLE_IDENTIFIER'=>'org.gtfol.asset', 'SWIFT_VERSION'=>'5.0',
     'INFOPLIST_FILE'=>'Asset/Info.plist', 'GENERATE_INFOPLIST_FILE'=>'NO',
-    'MARKETING_VERSION'=>'0.1.0', 'CURRENT_PROJECT_VERSION'=>'4',
+    'MARKETING_VERSION'=>'0.1.0', 'CURRENT_PROJECT_VERSION'=>'5',
     'TARGETED_DEVICE_FAMILY'=>'1,2', 'CODE_SIGN_STYLE'=>'Automatic',
     'DEVELOPMENT_TEAM'=>'J59ZSG67SJ',
     'CODE_SIGN_ENTITLEMENTS'=>'Asset/Asset.entitlements',

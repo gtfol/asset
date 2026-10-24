@@ -189,6 +189,7 @@ describe('Venmo receiving lifecycle', () => {
   }
   beforeEach(async () => {
     await db.query('DELETE FROM venmo_routes');
+    await db.query('DELETE FROM workspace_changes');
     await db.query('UPDATE users SET google_subject=NULL');
     const state = fixture();
     state.accounts[0].name = 'Venmo imported';

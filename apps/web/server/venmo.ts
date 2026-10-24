@@ -221,8 +221,9 @@ export async function processVenmoEmail(
     ![...email.to, ...(email.received_for ?? [])].some((a) => mailbox(a) === route.source_email)
   )
     return;
-  const { state } = await getState(db, route.owner_id);
-  const timeZone = state.settings.timezone ?? 'America/Los_Angeles';
+  const settings = (await db.query<{ timezone: string }>(
+    "SELECT state#>>'{settings,timezone}' AS timezone FROM workspaces WHERE owner_id=$1", [route.owner_id])).rows[0];
+  const timeZone = settings?.timezone ?? 'America/Los_Angeles';
   const parsed = parseVenmoReceipt({
     subject: email.subject,
     text,
@@ -309,6 +310,9 @@ export async function processVenmoEmail(
     },
     undefined,
     historical,
+    undefined,
+    { transactions: { amounts: parsed.receipt ? [String(parsed.receipt.amount)] : [],
+      providerIds: parsed.receipt ? [`venmo:${parsed.receipt.receiptId}`] : [], recurring: !!parsed.receipt } },
   );
 }
 

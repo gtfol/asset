@@ -1,5 +1,5 @@
 import { applyCommand, backup, type Command } from '../shared/core';
-import { assertWorkspaceChanges, createLocalWorkspace, hasLocalRecords, localCommand, receiveWorkspace, validateLocalWorkspace, workspaceChanges, workspaceSyncPath, workspaceUnchanged,
+import { assertWorkspaceChanges, createLocalWorkspace, hasLocalRecords, localCommand, receiveWorkspace, validateLocalWorkspace, workspaceChanges, workspaceSyncPath, workspaceUnchanged, workspaceDeltaReady,
   type LocalWorkspace } from '../shared/workspace';
 
 type API = (path: string, body?: unknown) => Promise<any>;
@@ -112,7 +112,7 @@ export class Workspace {
     try {
       await this.mutate(async () => { this.changed(); });
       const known = { owner: this.doc.owner, revision: this.doc.revision };
-      const remote = await this.api(workspaceSyncPath(known));
+      const remote = await this.api(workspaceSyncPath(this.doc));
       if (generation !== this.generation) return;
       const unchanged = workspaceUnchanged(known, remote);
       if (remote.state?.settings.demo) {
@@ -136,12 +136,13 @@ export class Workspace {
           // Ownership and the pending merge are committed together, before clearing the guest.
           await this.save(next, guest ? { guest: createLocalWorkspace(crypto.randomUUID()), ['recovery-' + guest.id]: guest } : {});
         } else if (!unchanged && !this.doc.pending.length && remote.revision >= this.doc.revision) await this.save(receiveWorkspace(this.doc, remote));
-        const { state: _state, ...metadata } = remote;
+        const { state: _state, delta: _delta, ...metadata } = remote;
         this.metadata = metadata;
       });
       while (generation === this.generation && this.doc.owner === remote.ownerId && this.doc.pending.length) {
         const owner = this.doc.owner, operation = this.doc.pending[0];
-        const result = await this.api('/sync/command', { ownerId: owner, operation });
+        const result = await this.api('/sync/command', { ownerId: owner, operation,
+          ...(workspaceDeltaReady(this.doc) ? { revision: this.doc.revision, delta: true } : {}) });
         await this.mutate(async () => {
           if (generation === this.generation && owner === this.doc.owner)
             await this.save(receiveWorkspace(this.doc, result, operation.id));
@@ -181,7 +182,7 @@ export class Workspace {
     if (remote.ownerId !== this.doc.owner) throw Error('Sign in with the same Google account to resolve these changes.');
     await this.mutate(async () => {
       if (remote.ownerId !== this.doc.owner) throw Error('Your sign-in changed in another tab.');
-      await this.save({ ...this.doc, state: remote.state, revision: remote.revision, pending: [] },
+      await this.save({ ...this.doc, base: remote.state, state: remote.state, revision: remote.revision, pending: [] },
         { ['recovery-' + crypto.randomUUID()]: backup(this.doc.state) });
       this.conflict = false; this.status = 'Synced';
     });

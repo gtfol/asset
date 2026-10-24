@@ -62,7 +62,7 @@ private enum NativeStoreTests {
   private static func checkConditionalSync(store: Store) throws {
     let known: JSON = ["owner": "owner", "revision": 42]
     let path = try store.engine.call("workspaceSyncPath", [known]) as? String
-    try expect(path == "/state?ownerId=owner&revision=42", "Saved workspaces send their owner and revision instead of requesting every record")
+    try expect(path == "/state?ownerId=owner&revision=42&delta=1", "Saved workspaces request only changed records")
     let fresh: JSON = ["owner": NSNull(), "revision": 0]
     let firstPath = try store.engine.call("workspaceSyncPath", [fresh]) as? String
     try expect(firstPath == "/state", "First sign-in still requests a complete workspace")
@@ -76,6 +76,19 @@ private enum NativeStoreTests {
       do { _ = try store.engine.call("workspaceUnchanged", [known, invalid]) } catch { rejected = true }
       try expect(rejected, "A version match cannot apply to a different owner or revision")
     }
+    var doc = try store.engine.call("createLocalWorkspace", [UUID().uuidString]) as! JSON
+    doc["owner"] = "owner"
+    let state = doc["state"] as! JSON
+    var settings = state["settings"] as! JSON; settings["currency"] = "EUR"
+    let update: JSON = ["revision": 1, "delta": ["fromRevision": 0, "patches": [
+      ["collections": JSON(), "values": ["settings": settings], "unset": [String]()]
+    ]]]
+    let received = try store.engine.call("receiveWorkspace", [doc, update]) as! JSON
+    try expect(Row(received["state"] as! JSON).object("settings").text("currency") == "EUR", "Native applies a record delta to its saved state")
+    try expect(received["base"] is JSON, "Native persists a confirmed server base for offline edit replay")
+    var rejected = false
+    do { _ = try store.engine.call("receiveWorkspace", [received, update]) } catch { rejected = true }
+    try expect(rejected, "Native rejects a delta from the wrong saved revision")
   }
 
   private static func checkAppLock() throws {

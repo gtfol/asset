@@ -35,8 +35,8 @@ export function notificationRoutes(db: Database) {
         });
       return;
     }
-    const { state } = await getState(db, res.locals.owner);
-    if (state.settings.demo) throw Error('Demo workspaces cannot register for push notifications');
+    const { rows } = await db.query<{ demo: boolean }>("SELECT (state#>>'{settings,demo}')::boolean AS demo FROM workspaces WHERE owner_id=$1", [res.locals.owner]);
+    if (rows[0]?.demo) throw Error('Demo workspaces cannot register for push notifications');
     const input = z
       .object({
         token: z.string().regex(/^[a-f0-9]{64,512}$/),
@@ -135,7 +135,8 @@ export async function notificationWorker(db: Database, deadline: number, sender?
   for (const { owner_id, settings, notifications, has_transactions } of schedules) {
     if (Date.now() > deadline - 6000) break;
     if (has_transactions && dailySpendingDue({ settings, notifications }))
-      await mutateState(db, owner_id, (s) => dailySpendingNotification(s));
+      await mutateState(db, owner_id, (s) => dailySpendingNotification(s), undefined, false, undefined,
+        { transactions: { effectiveDayAt: new Date().toISOString() } });
     await db.query(
       'INSERT INTO notification_schedule(owner_id) VALUES($1) ON CONFLICT(owner_id) DO UPDATE SET checked_at=now()',
       [owner_id],

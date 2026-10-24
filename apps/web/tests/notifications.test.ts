@@ -119,15 +119,19 @@ describe('notification storage and delivery', () => {
   it('checks daily-summary metadata without reading the ledger until a summary is due', async () => {
     const state = fixture();
     state.settings.timezone = 'America/Los_Angeles';
-    state.transactions = [transaction('today', 1000, { date: '2026-10-17' })];
+    state.transactions = [transaction('today', 1000, { date: '2026-10-17' }), transaction('older', 2000, { date: '2020-01-01' })];
     await db.query("INSERT INTO users(id,email) VALUES('schedule','schedule@test.invalid')");
     await db.query('INSERT INTO workspaces(owner_id,state) VALUES($1,$2)', ['schedule', JSON.stringify(state)]);
     const ledgerReads: string[] = [];
     const traced: Database = {
       ...db,
       transaction: fn => db.transaction(tx => fn({ query: async (sql, params) => {
-        if (sql.includes('SELECT state,revision')) ledgerReads.push(sql);
-        return tx.query(sql, params);
+        const result = await tx.query(sql, params);
+        if (sql.includes('AS state,revision') || sql.includes('SELECT state,revision')) {
+          ledgerReads.push(sql);
+          expect(JSON.stringify(result.rows)).not.toContain('older');
+        }
+        return result;
       } })),
       query: async (sql, params) => {
         if (sql.includes('SELECT state,revision')) ledgerReads.push(sql);

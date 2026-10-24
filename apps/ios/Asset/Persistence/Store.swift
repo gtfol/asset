@@ -488,7 +488,7 @@ enum SessionKey {
     let token = SessionKey.read()
     do {
       let known: JSON = ["owner": owner as Any? ?? NSNull(), "revision": revision]
-      let path = try engine.call("workspaceSyncPath", [known]) as? String ?? "/state"
+      let path = try engine.call("workspaceSyncPath", [document]) as? String ?? "/state"
       let r = try await request(path, token: token)
       guard generation == workspaceGeneration, token == SessionKey.read() else { return }
       let unchanged = try engine.call("workspaceUnchanged", [known, r]) as? Bool == true
@@ -512,7 +512,11 @@ enum SessionKey {
       connections = (r["connections"] as? [JSON] ?? []).map(Row.init)
       configured = r["plaidConfigured"] as? Bool ?? false
       while let operation = (document["pending"] as? [JSON])?.first {
-        let result = try await request("/sync/command", body: ["ownerId": remoteOwner, "operation": operation])
+        var body: JSON = ["ownerId": remoteOwner, "operation": operation]
+        if try engine.call("workspaceDeltaReady", [document]) as? Bool == true {
+          body["revision"] = revision; body["delta"] = true
+        }
+        let result = try await request("/sync/command", body: body)
         guard generation == workspaceGeneration, token == SessionKey.read() else { return }
         try receive(result, acknowledged: operation["id"] as? String)
       }
@@ -529,7 +533,7 @@ enum SessionKey {
     let r = try await request("/state")
     guard r["ownerId"] as? String == owner else { throw failure("Sign in with the same Google account.") }
     try persist(state, workspace: "before-sync-resolution-" + uid())
-    var next = document; next["state"] = r["state"]; next["revision"] = r["revision"]; next["pending"] = [JSON]()
+    var next = document; next["state"] = r["state"]; next["base"] = r["state"]; next["revision"] = r["revision"]; next["pending"] = [JSON]()
     try persistDocument(next); publishDocument(); syncConflict = false; syncStatus = "Synced"
   }
   func signInWithGoogle(

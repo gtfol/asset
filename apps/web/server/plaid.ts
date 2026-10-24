@@ -8,6 +8,7 @@ import {
 } from 'node:crypto';
 import { decodeProtectedHeader, importJWK, jwtVerify, type JWK } from 'jose';
 import { mutateState, type Database, type SQL } from './db.js';
+import { sameValue } from '../shared/delta.js';
 import { acceptedOrigins } from './hosting.js';
 import { allowedCloudEmails, ownerAccessSQL, ownerCanAccess } from './access.js';
 import { venmoBankTransfer } from '../shared/venmo.js';
@@ -426,6 +427,7 @@ export function applyProviderRecords(
     const old = previous ?? pending;
     normalized.fingerprint = old?.fingerprint ?? fingerprint(normalized);
     if (old) {
+      normalized.importedAt = old.importedAt;
       normalized.edits = old.edits;
       normalized.reviewed = old.reviewed;
       normalized.splits = old.splits;
@@ -565,6 +567,27 @@ type SyncBatch = {
   cursor: string | null;
   updateStatus?: string;
 };
+function investmentRecords(accounts: State['accounts'], connectionId: string, investments: any, activity: any[]) {
+  const holdings: State['holdings'] = [], investmentActivity: State['investmentActivity'] = [];
+  for (const h of investments.holdings) {
+    const a = accounts.find(a => a.connectionId === connectionId && a.providerId === h.account_id);
+    if (!a) continue;
+    const security = investments.securities.find((x: any) => x.security_id === h.security_id);
+    holdings.push({ id: `${a.id}:${h.security_id}`, accountId: a.id,
+      symbol: security?.ticker_symbol ?? '—', name: security?.name ?? 'Unsupported security',
+      quantity: String(h.quantity ?? 0), price: minor(h.institution_price ?? security?.close_price),
+      marketValue: minor(h.institution_value), costBasis: minor(h.cost_basis), currency: h.iso_currency_code ?? a.currency,
+      priceAt: h.institution_price_as_of ?? security?.close_price_as_of ?? null,
+      type: security?.type ?? 'Other', providerId: h.security_id, source: 'plaid' });
+  }
+  for (const t of activity) {
+    const a = accounts.find(a => a.connectionId === connectionId && a.providerId === t.account_id);
+    if (a) investmentActivity.push({ id: t.investment_transaction_id, accountId: a.id, date: t.date,
+      type: t.type, amount: minor(t.amount) ?? 0, currency: t.iso_currency_code ?? a.currency,
+      name: t.name, securityId: t.security_id ?? null, quantity: String(t.quantity ?? 0), source: 'plaid' });
+  }
+  return { holdings, investmentActivity };
+}
 async function commitSync(
   db: Database,
   c: Connection,
@@ -576,10 +599,36 @@ async function commitSync(
 ) {
   const id = c.id,
     owner = c.owner_id;
+  const changedTransactions = [...(batch?.added ?? []), ...(batch?.modified ?? [])];
+  // Plaid sends holdings/activity snapshots. Send that incoming data into the
+  // comparison query; Postgres returns IDs for identical records, not their
+  // contents. Hydration uses these exact known values, even on a cold function.
+  let knownInvestments;
+  if (investments) {
+    const accounts = (await db.query<{ accounts: State['accounts'] }>(
+      "SELECT state->'accounts' AS accounts FROM workspaces WHERE owner_id=$1", [owner])).rows[0]?.accounts ?? [];
+    knownInvestments = investmentRecords(accounts, id, investments, activity);
+  }
+  const scope = {
+    transactions: {
+      provider: { connectionId: id, ids: [...changedTransactions.flatMap(r => [r.transaction_id, r.pending_transaction_id].filter(Boolean)), ...(batch?.removed ?? []).map(r => r.transaction_id)] },
+      // Include amount matches for CSV reconciliation and ambiguity detection,
+      // including original fingerprints and user-edited dates/descriptions.
+      amounts: [...new Set(changedTransactions.map(r => String(Math.abs(minor(r.amount) ?? 0))))],
+      recurring: changedTransactions.length > 0,
+    },
+    snapshots: { connection: { id, date: today() } },
+    ...(investments ? {
+      holdings: { connection: { id }, known: Object.fromEntries(knownInvestments!.holdings.map(h => [h.id, h])) },
+      holdingSnapshots: { connection: { id, date: today() } },
+      investmentActivity: { connection: { id }, known: Object.fromEntries(knownInvestments!.investmentActivity.map(t => [t.id, t])) },
+    } : {}),
+  };
   return mutateState(
     db,
     owner,
     async (s, tx) => {
+      const loadedTransactionIDs = s.transactions.map(t => t.id);
       const live = (
         await tx.query<Connection>(
           'SELECT * FROM connections WHERE id=$1 AND owner_id=$2 FOR UPDATE',
@@ -624,15 +673,21 @@ async function commitSync(
           coverageEnd: a?.coverageEnd,
           coverageComplete: a?.coverageComplete ?? false,
         };
-        if (a) Object.assign(a, value);
+        if (a) {
+          // Fetch time belongs on the connection; unchanged account values must
+          // not cause new revisions and device downloads on every bank refresh.
+          if (sameValue({ ...a, updatedAt: value.updatedAt }, value)) value.updatedAt = a.updatedAt;
+          Object.assign(a, value);
+        }
         else {
           s.accounts.push(value);
           a = value;
         }
         if (a.balance !== null) {
+          const previousSnapshot = s.snapshots.find(p => p.accountId === a!.id && p.date === today());
           s.snapshots = s.snapshots.filter((p) => p.accountId !== a!.id || p.date !== today());
           s.snapshots.push({
-            id: randomUUID(),
+            id: previousSnapshot?.id ?? randomUUID(),
             accountId: a.id,
             date: today(),
             balance: a.balance,
@@ -648,57 +703,39 @@ async function commitSync(
         ].includes(batch.updateStatus ?? '');
         live.historical_complete ||= batch.updateStatus === 'HISTORICAL_UPDATE_COMPLETE';
         applyProviderRecords(s, live, batch);
+        // Coverage must still include history excluded from the scoped read.
+        // Return only each account's earliest date, never the old transactions.
+        const dates = (await tx.query<{ account_id: string; first_date: string }>(
+          `SELECT t->>'accountId' AS account_id,min(t->>'date') AS first_date
+           FROM workspaces,jsonb_array_elements(state->'transactions') t
+           WHERE owner_id=$1 AND t->>'connectionId'=$2 AND NOT (t->>'id'=ANY($3::text[]))
+             AND NOT (t->>'removed')::boolean AND NOT (t->>'pending')::boolean GROUP BY t->>'accountId'`,
+          [owner, id, loadedTransactionIDs])).rows;
+        for (const a of s.accounts.filter(a => a.connectionId === id)) {
+          const first = [...dates.filter(d => d.account_id === a.id).map(d => d.first_date),
+            ...s.transactions.filter(t => t.accountId === a.id && t.connectionId === id && !t.removed && !t.pending).map(t => t.date)].sort()[0];
+          a.coverageStart = first ?? a.coverageStart;
+          a.coverageComplete = live.historical_complete && !!a.coverageStart;
+        }
       }
       if (investments) {
         const accountIds = new Set(
           s.accounts.filter((a) => a.connectionId === id).map((a) => a.id),
         );
         s.holdings = s.holdings.filter((h) => !accountIds.has(h.accountId));
-        for (const h of investments.holdings) {
-          const a = s.accounts.find((a) => a.connectionId === id && a.providerId === h.account_id);
-          if (!a) continue;
-          const security = investments.securities.find((x: any) => x.security_id === h.security_id);
-          s.holdings.push({
-            id: `${a.id}:${h.security_id}`,
-            accountId: a.id,
-            symbol: security?.ticker_symbol ?? '—',
-            name: security?.name ?? 'Unsupported security',
-            quantity: String(h.quantity ?? 0),
-            price: minor(h.institution_price ?? security?.close_price),
-            marketValue: minor(h.institution_value),
-            costBasis: minor(h.cost_basis),
-            currency: h.iso_currency_code ?? a.currency,
-            priceAt: h.institution_price_as_of ?? security?.close_price_as_of ?? null,
-            type: security?.type ?? 'Other',
-            providerId: h.security_id,
-            source: 'plaid',
-          });
-        }
+        const incoming = investmentRecords(s.accounts, id, investments, activity);
+        s.holdings.push(...incoming.holdings);
+        const previousSnapshots = s.holdingSnapshots.filter(h => accountIds.has(h.accountId) && h.date === today());
         s.holdingSnapshots = s.holdingSnapshots.filter(
           (h) => !accountIds.has(h.accountId) || h.date !== today(),
         );
         s.holdingSnapshots.push(
           ...s.holdings
             .filter((h) => accountIds.has(h.accountId))
-            .map((h) => ({ ...h, id: randomUUID(), holdingId: h.id, date: today() })),
+            .map((h) => ({ ...h, id: previousSnapshots.find(p => p.holdingId === h.id)?.id ?? randomUUID(), holdingId: h.id, date: today() })),
         );
         s.investmentActivity = s.investmentActivity.filter((a) => !accountIds.has(a.accountId));
-        for (const t of activity) {
-          const a = s.accounts.find((a) => a.connectionId === id && a.providerId === t.account_id);
-          if (a)
-            s.investmentActivity.push({
-              id: t.investment_transaction_id,
-              accountId: a.id,
-              date: t.date,
-              type: t.type,
-              amount: minor(t.amount) ?? 0,
-              currency: t.iso_currency_code ?? a.currency,
-              name: t.name,
-              securityId: t.security_id ?? null,
-              quantity: String(t.quantity ?? 0),
-              source: 'plaid',
-            });
-        }
+        s.investmentActivity.push(...incoming.investmentActivity);
       }
       const status =
         c.product === 'investments' || live.historical_complete
@@ -730,6 +767,8 @@ async function commitSync(
     },
     undefined,
     !c.historical_complete,
+    undefined,
+    scope,
   );
 }
 
@@ -908,10 +947,10 @@ function newStage(connection: Connection, generation: number): SyncStage {
     throughDate,
   };
 }
-async function requireLease(tx: SQL, id: string, token: string): Promise<SyncJob> {
+async function requireLease(tx: SQL, id: string, token: string): Promise<Pick<SyncJob, 'attempts'>> {
   const row = (
-    await tx.query<SyncJob>(
-      `SELECT * FROM sync_jobs WHERE connection_id=$1 AND lease_token=$2
+    await tx.query<Pick<SyncJob, 'attempts'>>(
+      `SELECT attempts FROM sync_jobs WHERE connection_id=$1 AND lease_token=$2
       AND status='processing' AND lease_until>now() FOR UPDATE`,
       [id, token],
     )
@@ -1080,7 +1119,7 @@ export async function processJob(
         )
       ).rows[0];
       if (!connection) return;
-      let held: SyncJob;
+      let held: Pick<SyncJob, 'attempts'>;
       try {
         held = await requireLease(tx, job.connection_id, job.lease_token);
       } catch (lost) {

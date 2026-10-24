@@ -1,6 +1,8 @@
 import { z } from 'zod';
 import { applyCommand, emptyState, validateState, type Command, type State } from './core.js';
 import { defaultCategories } from './demo.js';
+import { applyWorkspaceUpdate, type WorkspaceUpdate } from './delta.js';
+export { stateDelta, applyStateDelta } from './delta.js';
 
 export function newWorkspace(): State {
   return { ...emptyState(), categories: defaultCategories() };
@@ -68,11 +70,15 @@ export const operationSchema = z.object({
 export type Operation = z.infer<typeof operationSchema>;
 export type LocalWorkspace = {
   version: 1; id: string; owner: string | null; revision: number; state: State; pending: Operation[];
+  base?: State;
 };
 type WorkspaceVersion = Pick<LocalWorkspace, 'owner' | 'revision'>;
-export function workspaceSyncPath(known: WorkspaceVersion): string {
+export function workspaceDeltaReady(known: Partial<LocalWorkspace>): boolean {
+  return !!known.base || !known.pending?.length;
+}
+export function workspaceSyncPath(known: WorkspaceVersion & Partial<LocalWorkspace>): string {
   return known.owner && known.owner !== 'legacy'
-    ? `/state?ownerId=${encodeURIComponent(known.owner)}&revision=${known.revision}` : '/state';
+    ? `/state?ownerId=${encodeURIComponent(known.owner)}&revision=${known.revision}${workspaceDeltaReady(known) ? '&delta=1' : ''}` : '/state';
 }
 export function workspaceUnchanged(known: WorkspaceVersion, remote: { unchanged?: boolean; ownerId?: string; revision: number }): boolean {
   if (remote.unchanged !== true) return false;
@@ -85,20 +91,23 @@ export function createLocalWorkspace(id: string): LocalWorkspace {
 }
 export function validateLocalWorkspace(input: unknown): LocalWorkspace {
   const doc = z.object({ version: z.literal(1), id: z.string().uuid(), owner: z.string().nullable(),
-    revision: z.number().int().nonnegative(), state: z.unknown(), pending: z.array(operationSchema) }).parse(input);
-  return { ...doc, state: validateState(doc.state) };
+    revision: z.number().int().nonnegative(), state: z.unknown(), base: z.unknown().optional(), pending: z.array(operationSchema) }).parse(input);
+  return { ...doc, state: validateState(doc.state), ...(doc.base ? { base: validateState(doc.base) } : {}) } as LocalWorkspace;
 }
 export function localCommand(doc: LocalWorkspace, command: Command, id: string): LocalWorkspace {
   const timestamp = new Date().toISOString();
   const state = applyCommand(doc.state, command, timestamp);
   const changes = workspaceChanges(doc.state, state);
-  return { ...doc, state, pending: doc.owner ? [...doc.pending, { id, timestamp, command, changes }] : [] };
+  return { ...doc, ...(doc.owner && !doc.pending.length ? { base: doc.base ?? doc.state } : {}),
+    state, pending: doc.owner ? [...doc.pending, { id, timestamp, command, changes }] : [] };
 }
-export function receiveWorkspace(doc: LocalWorkspace, remote: { state: State; revision: number }, acknowledged?: string): LocalWorkspace {
+export function receiveWorkspace(doc: LocalWorkspace, remote: WorkspaceUpdate, acknowledged?: string): LocalWorkspace {
   const pending = doc.pending.filter(o => o.id !== acknowledged);
-  let state = validateState(remote.state);
+  if (!remote.state && !workspaceDeltaReady(doc)) throw Error('Download the current version before syncing older saved edits.');
+  const base = applyWorkspaceUpdate(doc.base ?? doc.state, doc.revision, remote);
+  let state = base;
   for (const o of pending) state = applyCommand(state, o.command as Command, o.timestamp);
-  return { ...doc, ...remote, state, pending };
+  return { ...doc, revision: remote.revision, base, state, pending };
 }
 
 // Sign-in adds the device's records; it never restores a backup over an existing account.
