@@ -69,6 +69,17 @@ export type Operation = z.infer<typeof operationSchema>;
 export type LocalWorkspace = {
   version: 1; id: string; owner: string | null; revision: number; state: State; pending: Operation[];
 };
+type WorkspaceVersion = Pick<LocalWorkspace, 'owner' | 'revision'>;
+export function workspaceSyncPath(known: WorkspaceVersion): string {
+  return known.owner && known.owner !== 'legacy'
+    ? `/state?ownerId=${encodeURIComponent(known.owner)}&revision=${known.revision}` : '/state';
+}
+export function workspaceUnchanged(known: WorkspaceVersion, remote: { unchanged?: boolean; ownerId?: string; revision: number }): boolean {
+  if (remote.unchanged !== true) return false;
+  if (!known.owner || remote.ownerId !== known.owner || remote.revision !== known.revision)
+    throw Error('Sync could not verify the saved version. Your local changes are preserved.');
+  return true;
+}
 export function createLocalWorkspace(id: string): LocalWorkspace {
   return { version: 1, id, owner: null, revision: 0, state: newWorkspace(), pending: [] };
 }

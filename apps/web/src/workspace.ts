@@ -1,5 +1,5 @@
 import { applyCommand, backup, type Command } from '../shared/core';
-import { assertWorkspaceChanges, createLocalWorkspace, hasLocalRecords, localCommand, receiveWorkspace, validateLocalWorkspace, workspaceChanges,
+import { assertWorkspaceChanges, createLocalWorkspace, hasLocalRecords, localCommand, receiveWorkspace, validateLocalWorkspace, workspaceChanges, workspaceSyncPath, workspaceUnchanged,
   type LocalWorkspace } from '../shared/workspace';
 
 type API = (path: string, body?: unknown) => Promise<any>;
@@ -111,9 +111,11 @@ export class Workspace {
   private async pullAndPush(generation: number) {
     try {
       await this.mutate(async () => { this.changed(); });
-      const remote = await this.api('/state');
+      const known = { owner: this.doc.owner, revision: this.doc.revision };
+      const remote = await this.api(workspaceSyncPath(known));
       if (generation !== this.generation) return;
-      if (remote.state.settings.demo) {
+      const unchanged = workspaceUnchanged(known, remote);
+      if (remote.state?.settings.demo) {
         await this.api('/auth/logout', {});
         this.metadata = {}; this.status = 'Saved on this device'; this.changed(); return;
       }
@@ -121,6 +123,7 @@ export class Workspace {
       await this.mutate(async () => {
         if (generation !== this.generation) return;
         if (this.doc.owner !== remote.ownerId) {
+          if (unchanged) throw Error('Your sign-in changed in another tab. Refresh this workspace.');
           const guest = this.doc.owner === null ? this.doc : undefined;
           const previous = await this.storage.read(remote.ownerId);
           const cached = previous ? validateLocalWorkspace(previous) : undefined;
@@ -132,8 +135,9 @@ export class Workspace {
           }
           // Ownership and the pending merge are committed together, before clearing the guest.
           await this.save(next, guest ? { guest: createLocalWorkspace(crypto.randomUUID()), ['recovery-' + guest.id]: guest } : {});
-        } else if (!this.doc.pending.length && remote.revision >= this.doc.revision) await this.save(receiveWorkspace(this.doc, remote));
-        this.metadata = remote;
+        } else if (!unchanged && !this.doc.pending.length && remote.revision >= this.doc.revision) await this.save(receiveWorkspace(this.doc, remote));
+        const { state: _state, ...metadata } = remote;
+        this.metadata = metadata;
       });
       while (generation === this.generation && this.doc.owner === remote.ownerId && this.doc.pending.length) {
         const owner = this.doc.owner, operation = this.doc.pending[0];

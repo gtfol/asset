@@ -1,5 +1,13 @@
 # Verification record
 
+## October 24: conditional workspace sync
+
+Web and iOS now include the cached owner and revision in workspace checks. PostgreSQL returns a null state for matching versions, and the API returns an `unchanged` response with fresh session/connection metadata. The ledger is neither transferred from Supabase nor rewritten on-device during idle checks. First sign-in, another owner's workspace, and changed revisions still receive a complete snapshot. Older clients remain compatible. No-op mutations retain their revision while still recording operation acknowledgments.
+
+Daily notification scheduling selects settings and notifications instead of full workspaces; it loads the ledger only when a summary is due. Push delivery selects the individual notification and preferences. No schema migration or data deletion is required.
+
+All 200 web tests, the production build, native resource freshness, 109 native checks, and Node/JavaScriptCore parity pass locally. Regressions cover database response size (under 100 bytes for an unchanged synthetic ledger), repeated checks without device writes, cached restart, changed revisions, same-version account switches, fresh connection metadata, authentication, offline operations, conflict/lost-response retries, and notification scheduling before/after the daily summary. Native build 4 contains the client change; build 3 still requests complete snapshots.
+
 ## October 24: private cloud access
 
 `ASSET_ALLOWED_EMAILS` restricts new Google workspaces, new web/iOS sessions, existing cookie/bearer sessions, Plaid jobs and webhooks, Venmo receipt processing, and notification work to explicitly allowed Google identities. Production demo creation is disabled. Blocked browser sessions lose cloud controls while retaining their local records and pending edits. Existing hosted records are not deleted.

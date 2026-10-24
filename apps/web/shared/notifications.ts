@@ -49,7 +49,7 @@ export const notificationStateSchema = z.object({
   preferences: notificationPreferencesSchema,
   items: z.array(notificationItemSchema).max(200),
 });
-export const notificationPreferences = (s: State) =>
+export const notificationPreferences = (s: Pick<State, 'notifications'>) =>
   notificationPreferencesSchema.parse(s.notifications?.preferences ?? {});
 export type NotificationItem = z.infer<typeof notificationItemSchema>;
 const normalized = (s: string) => s.toLowerCase().trim().replace(/\s+/g, ' ');
@@ -159,10 +159,9 @@ export function updateNotifications(
   return { ...next, notifications: { preferences, items: items.slice(0, 200) } };
 }
 
-/** One daily summary after 7 pm in the workspace's time zone. No historical catch-up. */
-export function dailySpendingNotification(state: State, now = new Date().toISOString()): State {
-  if (state.settings.demo || !notificationPreferences(state).spending || !state.transactions.length)
-    return state;
+/** Check compact metadata before loading the ledger to calculate a daily summary. */
+export function dailySpendingDue(state: Pick<State, 'settings' | 'notifications'>, now = new Date().toISOString()): boolean {
+  if (state.settings.demo || !notificationPreferences(state).spending) return false;
   const date = new Date(now),
     day = today(state.settings.timezone, date);
   const hour = Number(
@@ -172,7 +171,13 @@ export function dailySpendingNotification(state: State, now = new Date().toISOSt
       hourCycle: 'h23',
     }).format(date),
   );
-  if (hour < 19 || state.notifications?.items.some((n) => n.id === `spending:${day}`)) return state;
+  return hour >= 19 && !state.notifications?.items.some((n) => n.id === `spending:${day}`);
+}
+
+/** One daily summary after 7 pm in the workspace's time zone. No historical catch-up. */
+export function dailySpendingNotification(state: State, now = new Date().toISOString()): State {
+  if (!state.transactions.length || !dailySpendingDue(state, now)) return state;
+  const day = today(state.settings.timezone, new Date(now));
   const value = totals(state, day, day, false);
   if (!value.spending) return state;
   return {

@@ -23,6 +23,8 @@ Set the Vercel project's **Root Directory to `apps/web`** and select **Vite**. T
 
 The native app uses bundle ID `org.gtfol.asset`, signing team `J59ZSG67SJ`, and App Store Connect app `6824126579`. `apps/ios/ExportOptions.plist` configures TestFlight uploads. Both apps open directly into an empty workspace and save records on the device. Optional Google sign-in adds local records to the cloud workspace and syncs later edits; there is no demo or server-selection screen. Apple account sync remains disabled pending FinanceKit approval.
 
+Signed-in apps check the saved workspace's owner and revision while active. An unchanged version returns only connection/session metadata, with no workspace JSON transferred from PostgreSQL or written to the device. Initial sign-in and changed versions fetch the current workspace; local edits still queue offline and retry idempotently. Older clients that omit the version continue to receive the full response. No-op server updates retain their revision. Notification scheduling reads compact settings and alert metadata, loading the ledger only when a daily summary is due.
+
 [Web setup](apps/web/README.md) · [iOS setup](apps/ios/README.md) · [Repository migration](docs/repository-migration.md)
 
 ## Product and verification

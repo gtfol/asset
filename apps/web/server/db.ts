@@ -4,6 +4,7 @@ import pg from 'pg';
 import { readFileSync } from 'node:fs';
 import { readFile, readdir, mkdir } from 'node:fs/promises';
 import { checkServerIdentity } from 'node:tls';
+import { isDeepStrictEqual } from 'node:util';
 import { validateState, type State } from '../shared/core.js';
 import { assertHostedPayloadSize } from './hosting.js';
 import { updateNotifications } from '../shared/notifications.js';
@@ -151,6 +152,19 @@ export async function getState(db: SQL, owner: string) {
   if (!r.rows[0]) throw Error('Workspace not found');
   return { ...r.rows[0], state: validateState(r.rows[0].state) };
 }
+export async function getSyncState(db: SQL, owner: string, known?: { ownerId: string; revision: number }) {
+  if (!known) return getState(db, owner);
+  // Compare inside Postgres: an unchanged JSON document must not cross the database connection.
+  // Include the owner because two different workspaces can have the same revision.
+  const { rows } = await db.query<{ state: State | null; revision: number }>(
+    `SELECT CASE WHEN owner_id=$2 AND revision=$3 THEN NULL ELSE state END AS state,revision
+     FROM workspaces WHERE owner_id=$1`, [owner, known.ownerId, known.revision],
+  );
+  const row = rows[0];
+  if (!row) throw Error('Workspace not found');
+  return row.state === null ? { unchanged: true as const, revision: row.revision }
+    : { state: validateState(row.state), revision: row.revision };
+}
 export async function mutateState(
   db: Database,
   owner: string,
@@ -187,12 +201,15 @@ export async function mutateState(
       ),
     );
     assertHostedPayloadSize(next);
-    await enqueueNotifications(tx, owner, before, next);
-    await tx.query(
-      'UPDATE workspaces SET state=$1,revision=revision+1,updated_at=now() WHERE owner_id=$2',
-      [JSON.stringify(next), owner],
-    );
+    const changed = !isDeepStrictEqual(before, next);
+    if (changed) {
+      await enqueueNotifications(tx, owner, before, next);
+      await tx.query(
+        'UPDATE workspaces SET state=$1,revision=revision+1,updated_at=now() WHERE owner_id=$2',
+        [JSON.stringify(next), owner],
+      );
+    }
     if (operation) await tx.query('INSERT INTO workspace_operations(owner_id,id,hash) VALUES($1,$2,$3)', [owner, operation.id, operation.hash]);
-    return { state: next, revision: row.revision + 1 };
+    return { state: next, revision: row.revision + Number(changed) };
   });
 }

@@ -98,7 +98,6 @@ struct RootView: View {
               case .transaction: TransactionSetupView()
               }
             }
-            .task { await store.refresh() }
             .task(id: scenePhase) {
               while scenePhase == .active && !Task.isCancelled {
                 await store.refresh()

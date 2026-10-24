@@ -3,7 +3,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { connect } from 'node:http2';
 import { importPKCS8, SignJWT } from 'jose';
 import { z } from 'zod';
-import { dailySpendingNotification, notificationPreferences, type State } from '../shared/core.js';
+import { dailySpendingDue, dailySpendingNotification, notificationPreferences, type State, type NotificationItem } from '../shared/core.js';
 import { getState, mutateState, type Database, type SQL } from './db.js';
 import { readToken, tokenHash } from './auth.js';
 import { allowedCloudEmails, ownerAccessSQL } from './access.js';
@@ -123,17 +123,18 @@ export function applePushSender(): PushSender {
 
 export async function notificationWorker(db: Database, deadline: number, sender?: PushSender) {
   const schedules = (
-    await db.query<{ owner_id: string }>(`SELECT w.owner_id FROM workspaces w
+    await db.query<{ owner_id: string; settings: State['settings']; notifications: State['notifications']; has_transactions: boolean }>(
+    `SELECT w.owner_id,w.state->'settings' AS settings,w.state->'notifications' AS notifications,
+      jsonb_array_length(w.state->'transactions')>0 AS has_transactions FROM workspaces w
     LEFT JOIN notification_schedule n ON n.owner_id=w.owner_id
     WHERE COALESCE((w.state->'settings'->>'demo')::boolean,false)=false
       AND ${ownerAccessSQL('w.owner_id', 1)}
       AND (n.checked_at IS NULL OR n.checked_at < now() - interval '15 minutes')
     ORDER BY n.checked_at NULLS FIRST LIMIT 50`, [allowedCloudEmails()])
   ).rows;
-  for (const { owner_id } of schedules) {
+  for (const { owner_id, settings, notifications, has_transactions } of schedules) {
     if (Date.now() > deadline - 6000) break;
-    const { state } = await getState(db, owner_id);
-    if (dailySpendingNotification(state) !== state)
+    if (has_transactions && dailySpendingDue({ settings, notifications }))
       await mutateState(db, owner_id, (s) => dailySpendingNotification(s));
     await db.query(
       'INSERT INTO notification_schedule(owner_id) VALUES($1) ON CONFLICT(owner_id) DO UPDATE SET checked_at=now()',
@@ -161,12 +162,17 @@ export async function notificationWorker(db: Database, deadline: number, sender?
       return row;
     });
     if (!job) break;
-    const { state } = await getState(db, job.owner_id);
-    const event = state.notifications?.items.find((n) => n.id === job.notification_id);
+    const { rows } = await db.query<{ preferences: NonNullable<State['notifications']>['preferences']; event: NotificationItem | null }>(
+      `SELECT state->'notifications'->'preferences' AS preferences,
+        (SELECT item FROM jsonb_array_elements(state->'notifications'->'items') AS item WHERE item->>'id'=$2 LIMIT 1) AS event
+       FROM workspaces WHERE owner_id=$1`, [job.owner_id, job.notification_id],
+    );
+    const event = rows[0]?.event;
+    const preferences = notificationPreferences({ notifications: rows[0]?.preferences ? { preferences: rows[0].preferences, items: [] } : undefined });
     if (
       !event ||
       event.read ||
-      !notificationPreferences(state)[event.kind] ||
+      !preferences[event.kind] ||
       Date.now() - new Date(event.createdAt).getTime() > 86400000
     ) {
       await db.query("UPDATE notification_deliveries SET status='skipped' WHERE id=$1", [job.id]);

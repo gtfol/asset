@@ -49,6 +49,7 @@ private enum NativeStoreTests {
     try checkAppLock()
     try checkPlaidLifecycle()
     try checkAPIRequests()
+    try checkConditionalSync(store: store)
     try checkIdentitiesAndTransactions(store: store, demo: demo)
     try checkFiltersAndPaging(store: store, demo: demo)
     try checkInvalidation(store: store, demo: demo)
@@ -56,6 +57,25 @@ private enum NativeStoreTests {
     print(
       "PASS: \(checks) native sign-in, Plaid lifecycle, API requests, Store identity, filtering, paging, and cache invalidation checks."
     )
+  }
+
+  private static func checkConditionalSync(store: Store) throws {
+    let known: JSON = ["owner": "owner", "revision": 42]
+    let path = try store.engine.call("workspaceSyncPath", [known]) as? String
+    try expect(path == "/state?ownerId=owner&revision=42", "Saved workspaces send their owner and revision instead of requesting every record")
+    let fresh: JSON = ["owner": NSNull(), "revision": 0]
+    let firstPath = try store.engine.call("workspaceSyncPath", [fresh]) as? String
+    try expect(firstPath == "/state", "First sign-in still requests a complete workspace")
+    let response: JSON = ["ownerId": "owner", "revision": 42, "unchanged": true]
+    let unchanged = try store.engine.call("workspaceUnchanged", [known, response]) as? Bool
+    try expect(unchanged == true, "Unchanged native responses need no state document")
+    let changed = try store.engine.call("workspaceUnchanged", [known, ["ownerId": "owner", "revision": 43]]) as? Bool
+    try expect(changed == false, "A changed workspace is received normally")
+    for invalid: JSON in [["ownerId": "other", "revision": 42, "unchanged": true], ["ownerId": "owner", "revision": 43, "unchanged": true]] {
+      var rejected = false
+      do { _ = try store.engine.call("workspaceUnchanged", [known, invalid]) } catch { rejected = true }
+      try expect(rejected, "A version match cannot apply to a different owner or revision")
+    }
   }
 
   private static func checkAppLock() throws {

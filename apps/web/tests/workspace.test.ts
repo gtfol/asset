@@ -3,10 +3,11 @@ import { randomUUID } from 'node:crypto';
 import { once } from 'node:events';
 import type { Server } from 'node:http';
 import { createApp } from '../server/app';
-import { openDatabase, getState, type Database } from '../server/db';
+import { openDatabase, getState, getSyncState, mutateState, type Database } from '../server/db';
 import { newSession } from '../server/auth';
 import { applyCommand } from '../shared/core';
-import { newWorkspace, createLocalWorkspace, localCommand, assertWorkspaceChanges, mergeLocalWorkspace, type LocalWorkspace } from '../shared/workspace';
+import { newWorkspace, createLocalWorkspace, localCommand, assertWorkspaceChanges, mergeLocalWorkspace, workspaceSyncPath, workspaceUnchanged, type LocalWorkspace } from '../shared/workspace';
+import { createDemo } from '../shared/demo';
 import { Workspace, type WorkspaceStorage } from '../src/workspace';
 
 const account = (id = 'checking', name = 'Checking') => ({ type: 'account.save', payload: {
@@ -15,6 +16,7 @@ const account = (id = 'checking', name = 'Checking') => ({ type: 'account.save',
 class MemoryStorage implements WorkspaceStorage {
   data = new Map<string, unknown>();
   fail = false;
+  writes = 0;
   locks = new Map<string, Promise<unknown>>();
   lock<T>(name: string, action: () => Promise<T>): Promise<T> {
     const next = (this.locks.get(name) ?? Promise.resolve()).then(action);
@@ -23,6 +25,7 @@ class MemoryStorage implements WorkspaceStorage {
   async read(key: string) { return structuredClone(this.data.get(key)); }
   async write(values: Record<string, unknown>) {
     if (this.fail) throw Error('Storage is full');
+    this.writes++;
     for (const [key, value] of Object.entries(values)) this.data.set(key, structuredClone(value));
   }
 }
@@ -48,6 +51,87 @@ describe('local workspace synchronization', () => {
     };
     return { owner, api };
   }
+  it('returns only metadata for a matching owner/version, including on the database connection', async () => {
+    const { owner, api } = await identity();
+    await db.query('UPDATE workspaces SET state=$1 WHERE owner_id=$2', [JSON.stringify(createDemo('2026-10-15')), owner]);
+    const full = await api('/state');
+    const known = { owner, revision: full.revision };
+    const unchanged = await api(workspaceSyncPath(known));
+    expect(unchanged).toMatchObject({ ownerId: owner, revision: full.revision, unchanged: true, connections: [] });
+    expect(unchanged).not.toHaveProperty('state');
+    expect(unchanged.sessionId).toBe(full.sessionId);
+    let transferred = '';
+    const result = await getSyncState({ query: async (sql, params) => {
+      const result = await db.query(sql, params); transferred = JSON.stringify(result.rows); return result;
+    } }, owner, { ownerId: owner, revision: full.revision });
+    expect(result).toEqual({ unchanged: true, revision: full.revision });
+    expect(transferred).not.toContain('transactions');
+    expect(transferred.length).toBeLessThan(100);
+    expect(JSON.stringify(unchanged).length).toBeLessThan(JSON.stringify(full).length / 100);
+    for (const query of [`?ownerId=${owner}&revision=99`, '?ownerId=different-owner&revision=0']) {
+      expect(await api('/state' + query)).toHaveProperty('state');
+    }
+    await expect(api(`/state?ownerId=${owner}&revision=-1`)).rejects.toMatchObject({ status: 400 });
+    await expect(api('/state?revision=0')).rejects.toMatchObject({ status: 400 });
+    expect((await fetch(base + workspaceSyncPath(known))).status).toBe(401);
+  });
+  it('keeps an unchanged local copy across repeated checks and reloads, then receives another device’s edit', async () => {
+    const { owner, api } = await identity(), storage = new MemoryStorage();
+    const responses: any[] = [];
+    const tracked = async (path: string, body?: unknown) => {
+      const response = await api(path, body); responses.push(response); return response;
+    };
+    const app = new Workspace(tracked, () => {}, storage); await app.open(); await app.sync();
+    const writes = storage.writes;
+    for (let i = 0; i < 3; i++) await app.sync();
+    expect(storage.writes).toBe(writes);
+    expect(responses.slice(1).every(r => r.unchanged && !r.state)).toBe(true);
+    const reopened = new Workspace(tracked, () => {}, storage); await reopened.open(); await reopened.sync();
+    expect(responses.at(-1)).toMatchObject({ unchanged: true });
+    expect(reopened.status).toBe('Synced'); expect(reopened.metadata.sessionId).toBeTruthy();
+    await mutateState(db, owner, state => applyCommand(state, account('other-device')));
+    await reopened.sync();
+    expect(reopened.doc.state.accounts[0].id).toBe('other-device');
+    await reopened.sync(); expect(responses.at(-1)).toMatchObject({ unchanged: true });
+    await reopened.command(account('this-device')); await reopened.sync();
+    expect(reopened.doc.pending).toHaveLength(0);
+    expect((await getState(db, owner)).state.accounts).toHaveLength(2);
+  });
+  it('refreshes connection status without re-downloading financial records', async () => {
+    const { owner, api } = await identity();
+    const first = await api('/state');
+    await db.query(`INSERT INTO connections(id,owner_id,item_id,institution_id,institution_name,encrypted_token,product,status)
+      VALUES($1,$2,$1,$1,'Test Bank','encrypted','transactions','healthy')`, [randomUUID(), owner]);
+    const r = await api(workspaceSyncPath({ owner, revision: first.revision }));
+    expect(r.unchanged).toBe(true); expect(r.connections[0].institution_name).toBe('Test Bank');
+    expect(r).not.toHaveProperty('state');
+  });
+  it('does not suppress the first download when the authenticated account has the same version', async () => {
+    const first = await identity(), second = await identity();
+    let current = first.api;
+    const app = new Workspace((p, b) => current(p, b), () => {}, new MemoryStorage());
+    await app.open(); await app.sync();
+    current = second.api; await app.sync();
+    expect(app.doc.owner).toBe(second.owner); expect(app.doc.revision).toBe(0);
+    expect(app.metadata.ownerId).toBe(second.owner);
+  });
+  it('rejects mismatched unchanged responses and always loads initial/legacy workspaces', () => {
+    expect(workspaceSyncPath({ owner: null, revision: 0 })).toBe('/state');
+    expect(workspaceSyncPath({ owner: 'legacy', revision: 0 })).toBe('/state');
+    for (const response of [{ ownerId: 'other', revision: 1 }, { ownerId: 'owner', revision: 2 }])
+      expect(() => workspaceUnchanged({ owner: 'owner', revision: 1 }, { ...response, unchanged: true })).toThrow('saved version');
+  });
+  it('does not create revisions for no-op updates and still acknowledges/retries the operation', async () => {
+    const { owner, api } = await identity();
+    const first = await mutateState(db, owner, state => applyCommand(state, account()));
+    const unchanged = await mutateState(db, owner, state => state);
+    expect(unchanged.revision).toBe(first.revision);
+    const local = localCommand({ ...createLocalWorkspace(randomUUID()), owner, ...first }, account(), randomUUID());
+    const request = { ownerId: owner, operation: local.pending[0] };
+    expect((await api('/sync/command', request)).revision).toBe(first.revision);
+    expect((await api('/sync/command', request)).revision).toBe(first.revision);
+    expect((await db.query('SELECT id FROM workspace_operations WHERE owner_id=$1', [owner])).rows).toHaveLength(1);
+  });
   it('opens locally, persists edits across reloads, and never invents demo records', async () => {
     const storage = new MemoryStorage();
     const noSession = async () => { throw Object.assign(Error('Sign in'), { status: 401 }); };

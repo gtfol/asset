@@ -487,10 +487,14 @@ enum SessionKey {
     let generation = workspaceGeneration
     let token = SessionKey.read()
     do {
-      let r = try await request("/state", token: token)
+      let known: JSON = ["owner": owner as Any? ?? NSNull(), "revision": revision]
+      let path = try engine.call("workspaceSyncPath", [known]) as? String ?? "/state"
+      let r = try await request(path, token: token)
       guard generation == workspaceGeneration, token == SessionKey.read() else { return }
+      let unchanged = try engine.call("workspaceUnchanged", [known, r]) as? Bool == true
       guard let remoteOwner = r["ownerId"] as? String else { throw failure("Sync is updating. Your changes are saved here.") }
       if owner != remoteOwner {
+        guard !unchanged else { throw failure("Your sign-in changed. Refresh this workspace.") }
         guard owner == nil || owner == "legacy" || pendingCount == 0 else {
           throw failure("Sign in with the same Google account to sync your saved changes.")
         }
@@ -504,7 +508,7 @@ enum SessionKey {
           next = try engine.call("localCommand", [next, ["type": "workspace.merge", "payload": ["state": guestState, "id": id]], id]) as? JSON ?? [:]
         }
         try persistDocument(next); publishDocument()
-      } else if pendingCount == 0 && (r["revision"] as? Int ?? 0) >= revision { try receive(r) }
+      } else if !unchanged && pendingCount == 0 && (r["revision"] as? Int ?? 0) >= revision { try receive(r) }
       connections = (r["connections"] as? [JSON] ?? []).map(Row.init)
       configured = r["plaidConfigured"] as? Bool ?? false
       while let operation = (document["pending"] as? [JSON])?.first {

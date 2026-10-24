@@ -6,7 +6,7 @@ import { randomUUID, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
 import { applyCommand, backup, validateState, type Command } from '../shared/core.js';
 import { createDemo } from '../shared/demo.js';
-import { getState, mutateState, type Database } from './db.js';
+import { getState, getSyncState, mutateState, type Database } from './db.js';
 import { authenticated, newSession, readToken, tokenHash } from './auth.js';
 import {
   venmoRoutes,
@@ -220,10 +220,12 @@ export function createApp(
   app.use('/api/bitcoin', bitcoinRoutes(db, bitcoin));
   app.use('/api/venmo', venmoRoutes(db));
   app.get('/api/state', async (req, res) => {
+    const known = req.query.ownerId === undefined && req.query.revision === undefined ? undefined
+      : z.object({ ownerId: z.string().min(1).max(200), revision: z.coerce.number().int().min(0).max(2147483647) }).parse(req.query);
     // A missing encryption key must not make manual financial records inaccessible.
     const configuration = await plaidConfiguration(db, res.locals.owner).catch(() => null);
     res.json({
-      ...(await getState(db, res.locals.owner)),
+      ...(await getSyncState(db, res.locals.owner, known)),
       ownerId: res.locals.owner,
       sessionId: tokenHash('plaid-context:' + (readToken(req) ?? '')),
       connections: await listConnections(db, res.locals.owner),

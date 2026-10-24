@@ -1,4 +1,4 @@
-import { describe, expect, it, beforeAll, afterAll } from 'vitest';
+import { describe, expect, it, beforeAll, afterAll, vi } from 'vitest';
 import { once } from 'node:events';
 import type { Server } from 'node:http';
 import {
@@ -115,6 +115,40 @@ describe('notification storage and delivery', () => {
       headers: { authorization: `Bearer ${token}` },
     });
     expect(await response.json()).toMatchObject({ pushAvailable: false });
+  });
+  it('checks daily-summary metadata without reading the ledger until a summary is due', async () => {
+    const state = fixture();
+    state.settings.timezone = 'America/Los_Angeles';
+    state.transactions = [transaction('today', 1000, { date: '2026-10-17' })];
+    await db.query("INSERT INTO users(id,email) VALUES('schedule','schedule@test.invalid')");
+    await db.query('INSERT INTO workspaces(owner_id,state) VALUES($1,$2)', ['schedule', JSON.stringify(state)]);
+    const ledgerReads: string[] = [];
+    const traced: Database = {
+      ...db,
+      transaction: fn => db.transaction(tx => fn({ query: async (sql, params) => {
+        if (sql.includes('SELECT state,revision')) ledgerReads.push(sql);
+        return tx.query(sql, params);
+      } })),
+      query: async (sql, params) => {
+        if (sql.includes('SELECT state,revision')) ledgerReads.push(sql);
+        return db.query(sql, params);
+      },
+    };
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(new Date('2026-10-17T20:00:00Z'));
+      await notificationWorker(traced, Date.now() + 15000);
+      expect(ledgerReads).toHaveLength(0);
+      vi.setSystemTime(new Date('2026-10-18T02:00:00Z'));
+      await db.query("UPDATE notification_schedule SET checked_at=now()-interval '1 hour'");
+      await notificationWorker(traced, Date.now() + 15000);
+      expect(ledgerReads).toHaveLength(1);
+      const version = (await db.query("SELECT revision FROM workspaces WHERE owner_id='schedule'")).rows[0].revision;
+      await db.query("UPDATE notification_schedule SET checked_at=now()-interval '1 hour'");
+      await notificationWorker(traced, Date.now() + 15000);
+      expect(ledgerReads).toHaveLength(1);
+      expect((await db.query("SELECT revision FROM workspaces WHERE owner_id='schedule'")).rows[0].revision).toBe(version);
+    } finally { vi.useRealTimers(); }
   });
   it('enqueues atomically, delivers once, skips disabled alerts and removes devices on logout', async () => {
     const session = (
