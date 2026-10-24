@@ -9,6 +9,7 @@ import {
 import { decodeProtectedHeader, importJWK, jwtVerify, type JWK } from 'jose';
 import { mutateState, type Database, type SQL } from './db.js';
 import { acceptedOrigins } from './hosting.js';
+import { allowedCloudEmails, ownerAccessSQL, ownerCanAccess } from './access.js';
 import { venmoBankTransfer } from '../shared/venmo.js';
 import {
   applyRules,
@@ -785,7 +786,7 @@ export async function enqueueWebhook(db: Database, body: Buffer) {
         [event.item_id, 'disconnected'],
       )
     ).rows[0];
-    if (!row) return;
+    if (!row || !(await ownerCanAccess(tx, row.owner_id))) return;
     if (event.webhook_code === 'ERROR') {
       await tx.query('UPDATE connections SET status=$1,error_code=$2 WHERE id=$3', [
         event.error?.error_code === 'ITEM_LOGIN_REQUIRED' ? 'reauthentication_required' : 'failed',
@@ -840,6 +841,7 @@ export async function enqueueStaleSyncs(db: SQL): Promise<void> {
     `INSERT INTO sync_jobs(connection_id)
       SELECT c.id FROM connections c LEFT JOIN sync_jobs j ON j.connection_id=c.id
       WHERE c.status IN ('healthy','initial_loading','historical_loading','failed')
+        AND ${ownerAccessSQL('c.owner_id', 1)}
         AND (j.connection_id IS NULL OR
           (j.status='done' AND j.updated_at<now()-interval '2 minutes') OR
           (j.status='failed' AND j.updated_at<now()-interval '6 hours'))
@@ -849,6 +851,7 @@ export async function enqueueStaleSyncs(db: SQL): Promise<void> {
       ON CONFLICT(connection_id) DO UPDATE SET generation=sync_jobs.generation+1,
         status='pending',available_at=now(),attempts=0,last_error=NULL,stage=NULL,updated_at=now()
       WHERE sync_jobs.status IN ('done','failed')`,
+    [allowedCloudEmails()],
   );
 }
 
@@ -948,10 +951,11 @@ export async function processJob(
     const row = (
       await tx.query<SyncJob>(
         `SELECT j.*,c.owner_id FROM sync_jobs j JOIN connections c ON c.id=j.connection_id
-        WHERE c.status<>'disconnected' AND
+        WHERE c.status<>'disconnected' AND ${ownerAccessSQL('c.owner_id', 1)} AND
           ((j.status='pending' AND j.available_at<=now()) OR
            (j.status='processing' AND j.lease_until<=now()))
         ORDER BY j.available_at,j.created_at LIMIT 1 FOR UPDATE OF j SKIP LOCKED`,
+        [allowedCloudEmails()],
       )
     ).rows[0];
     if (!row) return undefined;

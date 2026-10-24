@@ -150,8 +150,9 @@ export class Workspace {
       this.conflict = e.status === 409 || (e.status === 400 && this.doc.pending.length > 0);
       this.status = this.conflict ? e.message : !this.doc.owner ? 'Saved on this device' : e.status === 401
         ? this.doc.owner ? 'Saved here · sign in to sync' : 'Saved on this device'
+        : e.code === 'ACCESS_RESTRICTED' ? 'Saved here · cloud access is restricted'
         : 'Saved here · sync paused';
-      if (e.status === 401) this.metadata = {};
+      if (e.status === 401 || e.code === 'ACCESS_RESTRICTED') this.metadata = {};
     }
     this.changed();
   }

@@ -1,5 +1,11 @@
 # Verification record
 
+## October 24: private cloud access
+
+`ASSET_ALLOWED_EMAILS` restricts new Google workspaces, new web/iOS sessions, existing cookie/bearer sessions, Plaid jobs and webhooks, Venmo receipt processing, and notification work to explicitly allowed Google identities. Production demo creation is disabled. Blocked browser sessions lose cloud controls while retaining their local records and pending edits. Existing hosted records are not deleted.
+
+The complete 192-test web suite passed, followed by 17 focused access/workspace tests after adding the local-edit preservation check. TypeScript checking passed. Tests cover allowed browser login, rejected Google identities, native callback/code rejection, existing cookie/bearer sessions, exact email matching, empty/invalid configuration, blocked demo creation, paused background work, and preservation of local records. Production and Preview are configured with a single allowed email; deployment verification is recorded separately when complete.
+
 ## October 18: native layout and add menu
 
 The native + button now opens the same five actions on every tab: transaction, account, Bitcoin wallet, holding, and category. Adding a transaction before an account exists offers account creation first. Bitcoin setup is available through + instead of a standalone Accounts section. Dashboard no longer repeats its title or introductory copy. Transactions uses regular Lato at 15pt, 13pt supporting text, a compact search field, and quiet empty states. Empty Accounts no longer shows a zero-balance chart and two oversized empty-state panels. Dynamic Type scaling remains enabled.

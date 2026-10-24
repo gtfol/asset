@@ -74,6 +74,8 @@ The first API request applies the SQL files in `server/migrations` atomically. A
 
 The server uses PKCE and a short-lived, HttpOnly `SameSite=Lax` state cookie for browser login. The resulting Asset session is HttpOnly, `SameSite=Strict`, and Secure over HTTPS. iOS uses the same Google browser flow, then exchanges a one-time callback code with its own PKCE proof for a Keychain-held session. No native Google secret is needed. Users map by their verified Google subject; an email collision with a legacy workspace requires explicit migration rather than automatic data transfer.
 
+For a private deployment, set the server variable `ASSET_ALLOWED_EMAILS` to the owner's exact Google email address and redeploy. Multiple addresses can be comma-separated; comparisons ignore case and surrounding spaces, but do not accept wildcards or Gmail alias variants. An explicitly empty value denies everyone; omitting the variable preserves multi-user self-hosting. The restriction applies before workspace creation, when issuing or using web/iOS sessions, and to Plaid, Venmo, and notification background work. Existing disallowed records are retained, but cannot use cloud services. Offline workspaces remain local. The old server demo endpoint is disabled in production and whenever this restriction is configured.
+
 Manual accounts and CSV imports need no sign-in or Plaid credentials. Vercel requests and responses are limited to 4.5 MB; large workspaces/backups require the persistent service deployment until server-side paging is implemented. The transaction screen currently pages rendered rows, while the API transfers the complete workspace.
 
 ### Bank synchronization

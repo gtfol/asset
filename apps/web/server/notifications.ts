@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { dailySpendingNotification, notificationPreferences, type State } from '../shared/core.js';
 import { getState, mutateState, type Database, type SQL } from './db.js';
 import { readToken, tokenHash } from './auth.js';
+import { allowedCloudEmails, ownerAccessSQL } from './access.js';
 
 export const pushConfigured = () =>
   !!(process.env.APNS_KEY_ID && process.env.APPLE_TEAM_ID && process.env.APNS_PRIVATE_KEY);
@@ -125,8 +126,9 @@ export async function notificationWorker(db: Database, deadline: number, sender?
     await db.query<{ owner_id: string }>(`SELECT w.owner_id FROM workspaces w
     LEFT JOIN notification_schedule n ON n.owner_id=w.owner_id
     WHERE COALESCE((w.state->'settings'->>'demo')::boolean,false)=false
+      AND ${ownerAccessSQL('w.owner_id', 1)}
       AND (n.checked_at IS NULL OR n.checked_at < now() - interval '15 minutes')
-    ORDER BY n.checked_at NULLS FIRST LIMIT 50`)
+    ORDER BY n.checked_at NULLS FIRST LIMIT 50`, [allowedCloudEmails()])
   ).rows;
   for (const { owner_id } of schedules) {
     if (Date.now() > deadline - 6000) break;
@@ -148,7 +150,8 @@ export async function notificationWorker(db: Database, deadline: number, sender?
         JOIN notification_devices d ON d.id=n.device_id AND d.owner_id=n.owner_id
         JOIN sessions s ON s.token_hash=d.session_hash AND s.expires_at>now()
         WHERE n.status='pending' AND n.available_at<=now() AND n.attempts<5
-        ORDER BY n.created_at LIMIT 1 FOR UPDATE OF n SKIP LOCKED`)
+          AND ${ownerAccessSQL('n.owner_id', 1)}
+        ORDER BY n.created_at LIMIT 1 FOR UPDATE OF n SKIP LOCKED`, [allowedCloudEmails()])
       ).rows[0];
       if (row)
         await tx.query(

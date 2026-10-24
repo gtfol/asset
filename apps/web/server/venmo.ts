@@ -5,6 +5,7 @@ import { convert } from 'html-to-text';
 import { z } from 'zod';
 import { getState, mutateState, type Database, type SQL } from './db.js';
 import { decryptToken, encryptToken } from './plaid.js';
+import { ownerCanAccess, allowedCloudEmails, ownerAccessSQL } from './access.js';
 import { applyRules, fingerprint, type State, type Transaction } from '../shared/core.js';
 import { importedMatch, preserveImportedDetails } from '../shared/account-links.js';
 import {
@@ -171,6 +172,7 @@ export async function processVenmoEmail(
   email: ReceivedEmail,
   now = new Date().toISOString(),
 ) {
+  if (!(await ownerCanAccess(db, route.owner_id))) return;
   if (
     !email.authentication ||
     email.authentication.dkim !== 'pass' ||
@@ -353,7 +355,7 @@ export function venmoWebhook(db: Database, provider: ReceivingProvider = new Res
           hash(token),
         ])
       ).rows[0];
-      if (row) matches.push(row);
+      if (row && await ownerCanAccess(db, row.owner_id)) matches.push(row);
     }
     const shared = [...data.to, ...(data.received_for ?? [])].some(
       (a) => mailbox(a) === `venmo@${receivingDomain()}`,
@@ -374,7 +376,9 @@ export function venmoWebhook(db: Database, provider: ReceivingProvider = new Res
       // Google confirmations can be assigned only to already-verified mailboxes.
       const routes = (
         await db.query<Route>(`SELECT v.* FROM venmo_routes v JOIN users u ON u.id=v.owner_id
-        WHERE v.active=true AND (v.source_verified=true OR (u.google_subject IS NOT NULL AND lower(u.email)=v.source_email))`)
+        WHERE v.active=true AND ${ownerAccessSQL('v.owner_id', 1)}
+          AND (v.source_verified=true OR (u.google_subject IS NOT NULL AND lower(u.email)=v.source_email))`,
+          [allowedCloudEmails()])
       ).rows;
       const text = (
         received.text || convert(received.html ?? '', { wordwrap: false })

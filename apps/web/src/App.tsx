@@ -125,7 +125,12 @@ export function App() {
     [month, setMonth] = useState(today().slice(0, 7)),
     [modal, setModal] = useState<{ kind: string; id?: string } | null>(null),
     [selected, setSelected] = useState<string | null>(null),
-    [error, setError] = useState(''),
+    [error, setError] = useState(() => {
+      const failure = new URLSearchParams(window.location.search).get('auth_error');
+      return failure === 'access_restricted'
+        ? 'Cloud access is limited to the owner of this Asset instance.'
+        : failure ? 'Google sign-in could not be completed. Please try again.' : '';
+    }),
     [notice, setNotice] = useState(''),
     [sidebar, setSidebar] = useState(false),
     [connections, setConnections] = useState<any[]>([]),

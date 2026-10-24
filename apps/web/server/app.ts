@@ -37,6 +37,7 @@ import {
 } from './plaid.js';
 import { acceptedOrigins, jsonBodyLimit } from './hosting.js';
 import { googleRoutes, GoogleOAuth, type GoogleProvider } from './google.js';
+import { hostedDemoDisabled, ownerCanAccess } from './access.js';
 import {
   plaidConfiguration,
   plaidWorkerReady,
@@ -120,7 +121,7 @@ export function createApp(
           )
         ).rows[0];
         // Unknown Items have no configured owner and cannot affect a workspace.
-        if (!connection) {
+        if (!connection || !(await ownerCanAccess(db, connection.owner_id))) {
           res.status(202).json({ accepted: true });
           return;
         }
@@ -171,6 +172,10 @@ export function createApp(
     next();
   });
   app.post('/api/auth/demo', async (req, res) => {
+    if (hostedDemoDisabled()) {
+      res.status(410).json({ error: 'Hosted demos are no longer available. Start a local workspace instead.' });
+      return;
+    }
     const id = randomUUID();
     await db.transaction(async (tx) => {
       await tx.query('INSERT INTO users(id,email,demo) VALUES($1,$2,true)', [
@@ -464,7 +469,7 @@ export function createApp(
         return;
       }
       res.status(error.status ?? (error instanceof PlaidError ? 503 : 400)).json({
-        ...(error.code === 'SYNC_CONFLICT' ? { code: error.code } : {}),
+        ...(['SYNC_CONFLICT', 'ACCESS_RESTRICTED'].includes(error.code) ? { code: error.code } : {}),
         error:
           error instanceof z.ZodError
             ? error.issues.map((x) => x.message).join('; ')

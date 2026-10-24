@@ -1,8 +1,10 @@
 import { randomBytes, createHash } from 'node:crypto';
 import type { Request, Response, NextFunction } from 'express';
 import type { Database } from './db.js';
+import { assertOwnerAccess, ownerCanAccess, accessMessage } from './access.js';
 export const tokenHash = (token: string) => createHash('sha256').update(token).digest('hex');
 export async function newSession(db: Database, owner: string, res: Response) {
+  await assertOwnerAccess(db, owner);
   const token = randomBytes(32).toString('base64url');
   await db.query(
     "INSERT INTO sessions(token_hash,owner_id,expires_at) VALUES($1,$2,now()+interval '14 days')",
@@ -39,6 +41,11 @@ export function authenticated(db: Database) {
     );
     if (!row.rows[0]) {
       res.status(401).json({ error: 'Session expired. Sign in again.' });
+      return;
+    }
+    if (!(await ownerCanAccess(db, row.rows[0].owner_id))) {
+      res.clearCookie('asset_session', { path: '/' });
+      res.status(403).json({ error: accessMessage, code: 'ACCESS_RESTRICTED' });
       return;
     }
     res.locals.owner = row.rows[0].owner_id;

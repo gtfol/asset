@@ -70,6 +70,21 @@ describe('local workspace synchronization', () => {
     expect(app.doc.pending).toEqual([]);
     await app.sync(); expect((await getState(db, owner)).state.accounts).toHaveLength(2);
   });
+  it('clears cloud controls after access is restricted and preserves pending local edits', async () => {
+    const { api } = await identity();
+    let restricted = false;
+    const app = new Workspace((path, body) => restricted
+      ? Promise.reject(Object.assign(Error('Cloud access restricted'), { status: 403, code: 'ACCESS_RESTRICTED' }))
+      : api(path, body), () => {}, new MemoryStorage());
+    await app.open(); await app.sync();
+    expect(app.metadata.sessionId).toBeTruthy();
+    restricted = true;
+    await app.command(account()); await app.sync();
+    expect(app.metadata).toEqual({});
+    expect(app.doc.state.accounts).toHaveLength(1);
+    expect(app.doc.pending).toHaveLength(1);
+    expect(app.status).toBe('Saved here · cloud access is restricted');
+  });
   it('retries a committed operation after a lost response and restart without duplicates', async () => {
     const { owner, api } = await identity(); const storage = new MemoryStorage();
     let drop = true;

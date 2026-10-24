@@ -7,6 +7,7 @@ import { defaultCategories } from '../shared/demo.js';
 import { newSession, tokenHash } from './auth.js';
 import type { Database } from './db.js';
 import { publicOrigin } from './hosting.js';
+import { assertCloudEmail } from './access.js';
 
 export interface GoogleIdentity {
   id: string;
@@ -92,6 +93,7 @@ export class GoogleOAuth implements GoogleProvider {
 }
 
 export async function googleWorkspace(db: Database, identity: GoogleIdentity) {
+  assertCloudEmail(identity.email);
   return db.transaction(async (tx) => {
     const existing = (await tx.query('SELECT id FROM users WHERE google_subject=$1', [identity.id]))
       .rows[0];
@@ -187,13 +189,14 @@ export function googleRoutes(db: Database, provider: GoogleProvider) {
         res.clearCookie('asset_oauth', cookieOptions);
         res.redirect(303, '/');
       }
-    } catch {
+    } catch (error) {
+      const restricted = (error as { code?: string })?.code === 'ACCESS_RESTRICTED';
       res.clearCookie('asset_oauth', cookieOptions);
       res.redirect(
         303,
         client === 'ios'
-          ? 'org.gtfol.asset://auth/callback?error=auth_failed'
-          : '/?auth_error=google_sign_in_failed',
+          ? `org.gtfol.asset://auth/callback?error=${restricted ? 'access_restricted' : 'auth_failed'}`
+          : `/?auth_error=${restricted ? 'access_restricted' : 'google_sign_in_failed'}`,
       );
     }
   });
