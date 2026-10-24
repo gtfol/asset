@@ -8,6 +8,10 @@ Daily notification scheduling selects settings and notifications instead of full
 
 All 200 web tests, the production build, native resource freshness, 109 native checks, and Node/JavaScriptCore parity pass locally. Regressions cover database response size (under 100 bytes for an unchanged synthetic ledger), repeated checks without device writes, cached restart, changed revisions, same-version account switches, fresh connection metadata, authentication, offline operations, conflict/lost-response retries, and notification scheduling before/after the daily summary. Native build 4 contains the client change; build 3 still requests complete snapshots.
 
+Commit `3fa0656` deployed successfully to production and passed GitHub's 200 web tests and build. The authenticated production workspace response measured 7,018,342 bytes before the conditional request and 2,458 bytes with the same owner/revision (170), containing five connection summaries and no state document. The deployed browser loaded the new bundle and reported Synced after reload and manual sync. These measurements describe response payloads, not a measured reduction of total monthly egress; previously consumed bandwidth remains in the billing cycle.
+
+Signed iOS **0.1.0 (4)** archived and uploaded successfully on October 24 at 1:26 PM Pacific. Apple reported the uploaded package processing. The first archive failed because the Documents build folder acquired Finder metadata; a clean build under `/tmp` succeeded. Upload again reported the existing missing LinkKit dSYM warning. TestFlight tester availability could not be verified because the App Store Connect browser session is signed out; build 4 must be installed for conditional native sync.
+
 ## October 24: private cloud access
 
 `ASSET_ALLOWED_EMAILS` restricts new Google workspaces, new web/iOS sessions, existing cookie/bearer sessions, Plaid jobs and webhooks, Venmo receipt processing, and notification work to explicitly allowed Google identities. Production demo creation is disabled. Blocked browser sessions lose cloud controls while retaining their local records and pending edits. Existing hosted records are not deleted.
