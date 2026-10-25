@@ -8,6 +8,8 @@ All **210 web tests**, the production build, native resource freshness, **112 na
 
 Apple updates now use scoped database reads, atomic record patches and revision-only responses. Cursor identity survives session refresh. Expired-history rebuilds preserve transaction edits and import provenance. The + menu includes Connect Apple accounts; web Connections explains the iPhone setup path.
 
+Commit `4a12e9c` passed GitHub Web checks and deployed to `asset.gtfol.dev` on October 25 at 1:28 AM Pacific. The live browser loaded the matching bundle, displayed the six-item review action, and reported Synced with no visible errors. Production financial records were not changed during verification.
+
 The Apple Developer portal shows FinanceKit available but unchecked for **org.gtfol.asset** on **J59ZSG67SJ**. The initial signed build failed because the provisioning profile lacks the capability. Enabling it is awaiting user confirmation under the browser permission policy. Build **0.1.0 (6)** is prepared, but has not been uploaded to TestFlight. Production FinanceKit is still disabled. Real Wallet consent and sync require a physical iPhone and remain unverified; synchronization runs on foreground unlock or manual refresh, without a background extension.
 
 ## October 24: record-level bank and edit sync
