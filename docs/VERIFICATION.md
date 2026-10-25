@@ -1,6 +1,6 @@
 # Verification record
 
-## October 25: dashboard review and Apple preparation
+## October 25: dashboard review and Apple activation
 
 Web and native dashboard review now supports dated rows, six visible transactions, individual editing, selected/shown batch review, and Undo. Copilot was inspected only in its user-enabled demo mode; no real financial transactions were reviewed or changed. Browser checks with synthetic local history verified selection count 236 → 234, Undo → 236, category/note edits preserved by Save & review, Save only retaining the queue count, and View all opening the unreviewed filter. Desktop 1365px and mobile 390px layouts were inspected; mobile category/amount collisions were corrected. Native simulator checks verified selected batch review 236 → 234 and Undo → 236, and opened the individual review form. The computer-control service could not operate native coordinate/scroll gestures, so final native scrolling and the toolbar Review action remain unverified.
 
@@ -10,7 +10,9 @@ Apple updates now use scoped database reads, atomic record patches and revision-
 
 Commit `4a12e9c` passed GitHub Web checks and deployed to `asset.gtfol.dev` on October 25 at 1:28 AM Pacific. The live browser loaded the matching bundle, displayed the six-item review action, and reported Synced with no visible errors. Production financial records were not changed during verification.
 
-The Apple Developer portal shows FinanceKit available but unchecked for **org.gtfol.asset** on **J59ZSG67SJ**. The initial signed build failed because the provisioning profile lacks the capability. Enabling it is awaiting user confirmation under the browser permission policy. Build **0.1.0 (6)** is prepared, but has not been uploaded to TestFlight. Production FinanceKit is still disabled. Real Wallet consent and sync require a physical iPhone and remain unverified; synchronization runs on foreground unlock or manual refresh, without a background extension.
+With the user's action-time approval, FinanceKit was enabled for **org.gtfol.asset** on **J59ZSG67SJ** and both development and App Store provisioning profiles were regenerated. The refreshed profile requires `com.apple.developer.financekit` to contain `["financial-data"]`; the app entitlement was corrected to match. Signed archive validation confirmed that value in the app and profile, build **0.1.0 (6)**, and `AssetFinanceKitEnabled: true`. The archive and App Store export/upload succeeded at 1:38 AM Pacific. Apple accepted the package for processing. Upload reported the existing non-blocking missing LinkKit dSYM warning.
+
+Production `FINANCEKIT_ENABLED` was enabled and deployment `dpl_E96jeWqRDDQRp6NXyzsrZG9VMrNm` reached Ready with the `asset.gtfol.dev` alias. A signed-in browser read of `/api/apple` returned `available: true`. No Apple accounts were connected and authenticator enrollment was not performed. Real Wallet consent and sync require a physical iPhone and remain unverified; synchronization runs on foreground unlock or manual refresh, without a background extension.
 
 ## October 24: record-level bank and edit sync
 
