@@ -3,6 +3,7 @@ import SwiftUI
 
 struct TransactionsView: View {
   @EnvironmentObject var store: Store
+  var initialReview = false
   var initialAccount = ""
   var initialCategory = ""
   var initialStart = ""
@@ -146,6 +147,7 @@ struct TransactionsView: View {
       .assetTitle("Transactions")
       .onAppear {
         if !initialized {
+          reviewOnly = initialReview
           account = initialAccount
           category = initialCategory
           start = initialStart

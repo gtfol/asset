@@ -486,6 +486,13 @@ export function ConnectionsDialog({
         </p>
       )}
       <VenmoConnection key={sessionId} state={state} sessionId={sessionId} load={load} />
+      <section className="connection-card">
+        <h3>Apple accounts</h3>
+        <p className="tiny muted">
+          Connect Apple Card, Apple Cash, and Savings from the + menu in Asset on your iPhone. Your
+          connected accounts and transactions sync here.
+        </p>
+      </section>
       <AccountLinks state={state} run={run} disabled={locked} />
       {connections.map((c) => (
         <section className="connection-card" key={c.id}>

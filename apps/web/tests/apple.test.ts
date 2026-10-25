@@ -200,6 +200,20 @@ describe('New-device verification and Apple API authorization', () => {
     const connected = await request('/apple/connect', account);
     expect(connected.status).toBe(200);
     expect((await request('/apple/sync', batch())).status).toBe(200);
+    await db.query(
+      `UPDATE workspaces SET state=jsonb_set(state,'{transactions,0,edits}', $2::jsonb) WHERE owner_id=$1`,
+      ['owner', JSON.stringify({ name: 'Edited coffee', notes: 'Keep on replay' })],
+    );
+    const reset = await request('/apple/reset', { accountId: 'a', deviceId: account.deviceId });
+    expect(reset.status).toBe(200);
+    expect((await reset.json()).state).toBeUndefined();
+    expect((await request('/apple/sync', batch())).status).toBe(200);
+    const replayed = (await (await request('/state')).json()).state.transactions[0];
+    expect(effective(replayed)).toMatchObject({
+      name: 'Edited coffee',
+      notes: 'Keep on replay',
+      removed: false,
+    });
     expect((await request('/apple/disconnect', { accountId: 'a' }, other)).status).toBe(400);
     const second = await newSession(db, 'owner', { cookie() {} } as unknown as Response);
     for (const endpoint of ['/state', '/backup', '/venmo', '/apple'])
@@ -245,5 +259,169 @@ describe('Statement-based loan records', () => {
         ],
       }),
     ).toThrow();
+  });
+});
+
+describe('Apple sync bandwidth and balance history', () => {
+  it('loads only changed transactions and balance candidates, preserving the complete ledger', async () => {
+    const { getState, mutateState } = await import('../server/db');
+    const { appleSyncScope } = await import('../server/apple');
+    vi.stubEnv('DATABASE_URL', undefined);
+    vi.stubEnv('VERCEL', undefined);
+    const db = await openDatabase(':memory:');
+    try {
+      const s = fixture();
+      s.transactions = Array.from({ length: 4000 }, (_, i) =>
+        transaction(`unrelated-${i}`, 999, { notes: 'Original history '.repeat(40) }),
+      );
+      s.transactions.push(
+        transaction('imported', 700, {
+          source: 'csv',
+          name: 'Coffee',
+          reviewed: true,
+          notes: 'Keep my note',
+          edits: { categoryId: 'food', excluded: true },
+        }),
+      );
+      connectAppleAccount(s, account, now);
+      const oldID = randomUUID(),
+        latestID = randomUUID();
+      s.snapshots = [
+        {
+          id: `apple-balance-a-${oldID}`,
+          accountId: 'a',
+          date: '2026-10-15',
+          asOf: '2026-10-15T12:00:00Z',
+          balance: 500,
+          currency: 'USD',
+          source: 'financekit',
+        },
+        {
+          id: `apple-balance-a-${latestID}`,
+          accountId: 'a',
+          date: '2026-10-16',
+          asOf: '2026-10-16T12:00:00Z',
+          balance: 600,
+          currency: 'USD',
+          source: 'financekit',
+        },
+      ];
+      await db.query('INSERT INTO users(id,email) VALUES($1,$2)', [
+        'apple-owner',
+        'apple@example.com',
+      ]);
+      await db.query('INSERT INTO workspaces(owner_id,state) VALUES($1,$2)', [
+        'apple-owner',
+        JSON.stringify(validateState(s)),
+      ]);
+      let bytes = 0;
+      const wrap = (sql: any): any => ({
+        query: async (query: string, params?: unknown[]) => {
+          const r = await sql.query(query, params);
+          bytes += Buffer.byteLength(JSON.stringify(r.rows));
+          return r;
+        },
+      });
+      const measured = {
+        ...wrap(db),
+        transaction: (fn: any) => db.transaction((tx) => fn(wrap(tx))),
+        close: () => db.close(),
+      } as Database;
+      const input = { ...batch(), deletedBalances: [latestID] };
+      await mutateState(
+        measured,
+        'apple-owner',
+        (state) => {
+          applyAppleBatch(state, input, now, 'first');
+          return state;
+        },
+        undefined,
+        true,
+        undefined,
+        appleSyncScope(input),
+      );
+      expect(bytes).toBeLessThan(15000);
+      const stored = await getState(db, 'apple-owner');
+      const expected = structuredClone(s);
+      applyAppleBatch(expected, input, now, 'first');
+      expected.notifications = {
+        preferences: (await import('../shared/notifications')).notificationPreferences(expected),
+        items: [],
+      };
+      expect(stored.state).toEqual(validateState(expected));
+      expect(stored.state.accounts[0].balance).toBe(500);
+      expect(stored.state.transactions).toHaveLength(4001);
+      expect(effective(stored.state.transactions.find((t) => t.id === 'imported')!)).toMatchObject({
+        notes: 'Keep my note',
+        reviewed: true,
+        categoryId: 'food',
+        excluded: true,
+      });
+      const repeat = await mutateState(
+        measured,
+        'apple-owner',
+        (state) => {
+          applyAppleBatch(state, input, now, 'first');
+          return state;
+        },
+        undefined,
+        true,
+        undefined,
+        appleSyncScope(input),
+      );
+      expect(repeat.revision).toBe(stored.revision);
+      const corrected = {
+        ...batch(2),
+        transactions: [],
+        balances: [
+          {
+            providerId: oldID,
+            date: '2026-10-14',
+            asOf: '2026-10-14T12:00:00Z',
+            balance: 400,
+            currency: 'USD' as const,
+          },
+        ],
+      };
+      await mutateState(
+        measured,
+        'apple-owner',
+        (state) => {
+          applyAppleBatch(state, corrected, now, 'second');
+          return state;
+        },
+        undefined,
+        true,
+        undefined,
+        appleSyncScope(corrected),
+      );
+      expect((await getState(db, 'apple-owner')).state.accounts[0].balance).toBe(400);
+      console.info('Apple scoped sync result bytes', bytes);
+    } finally {
+      await db.close();
+      vi.unstubAllEnvs();
+    }
+  }, 30000);
+  it('rejects conflicting balance updates instead of silently overwriting them', () => {
+    const s = fixture();
+    connectAppleAccount(s, account, now);
+    const balance = {
+      providerId: randomUUID(),
+      date: '2026-10-17',
+      asOf: now,
+      balance: 500,
+      currency: 'USD' as const,
+    };
+    expect(() =>
+      applyAppleBatch(s, { ...batch(), balances: [balance, balance] }, now, 'a'),
+    ).toThrow('Duplicate Apple balance');
+    expect(() =>
+      applyAppleBatch(
+        s,
+        { ...batch(), balances: [balance], deletedBalances: [balance.providerId] },
+        now,
+        'b',
+      ),
+    ).toThrow('Duplicate Apple balance');
   });
 });

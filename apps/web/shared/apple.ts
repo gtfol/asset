@@ -141,7 +141,8 @@ export function applyAppleBatch(
       categoryId: 'other',
       pending: t.pending,
       source: 'financekit',
-      importedAt: now,
+      removed: false,
+      importedAt: previous?.importedAt ?? now,
       providerId: t.providerId,
       connectionId: account.connectionId,
       raw: { authorized_date: t.authorizedDate, direction: t.direction },
@@ -177,7 +178,11 @@ export function applyAppleBatch(
     );
     if (t) t.removed = true;
   }
+  const seenBalances = new Set<string>();
   for (const b of input.balances) {
+    if (seenBalances.has(b.providerId) || input.deletedBalances.includes(b.providerId))
+      throw Error('Duplicate Apple balance change.');
+    seenBalances.add(b.providerId);
     if (b.currency !== account.currency) throw Error('Apple balance currency does not match.');
     const id = `apple-balance-${account.id}-${b.providerId}`;
     state.snapshots = state.snapshots.filter((s) => s.id !== id);

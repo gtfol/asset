@@ -30,3 +30,7 @@ Reviewed source on 2026-10-15 at these pinned revisions. Private source is not c
 ## Deliberate differences from Copilot
 
 The recurring engine and its special forecast adjustments are omitted. Asset counts all eligible posted spend, then provides its own disclosed extrapolation beside ideal budget pace. Only calendar Month/Year are available in Cash Flow. Unsupported portfolio return is shown as unavailable. The web Cash Flow composition adapts the inspected native source because the inspected Copilot web FAQ said it was not yet available on web. The gtfol visual treatment intentionally replaces Copilot's card surfaces and decorative styling while retaining useful row, inspector, budget, and chart relationships.
+
+## Dashboard transaction review
+
+The October 25 Copilot desktop demo inspection confirmed that dashboard rows open a transaction inspector in place, left checkboxes select a batch, the batch action follows the selection, and View all opens the full review list. Asset applies that workflow on web and iPhone with gtfol typography and neutral controls. The dashboard shows six dated items, supports reviewing selected or shown records, and offers Undo for the last batch. Editing a row can save and review it without leaving the dashboard; the review flag is written after the edits succeed. Web also offers Save only. Account and category labels remain readable at phone width. Existing imported review flags are unchanged.

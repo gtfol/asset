@@ -1,5 +1,15 @@
 # Verification record
 
+## October 25: dashboard review and Apple preparation
+
+Web and native dashboard review now supports dated rows, six visible transactions, individual editing, selected/shown batch review, and Undo. Copilot was inspected only in its user-enabled demo mode; no real financial transactions were reviewed or changed. Browser checks with synthetic local history verified selection count 236 → 234, Undo → 236, category/note edits preserved by Save & review, Save only retaining the queue count, and View all opening the unreviewed filter. Desktop 1365px and mobile 390px layouts were inspected; mobile category/amount collisions were corrected. Native simulator checks verified selected batch review 236 → 234 and Undo → 236, and opened the individual review form. The computer-control service could not operate native coordinate/scroll gestures, so final native scrolling and the toolbar Review action remain unverified.
+
+All **210 web tests**, the production build, native resource freshness, **112 native checks**, calculation parity, and the unsigned simulator build pass. New Apple regressions cover scoped database result payloads under 15 KB against 4,000 unrelated transactions, preserved import edits, same-batch retry, fallback/corrected historical balances, conflicting balance IDs, and expired-checkpoint replay preserving user edits. This measures synthetic database results, not monthly billed egress.
+
+Apple updates now use scoped database reads, atomic record patches and revision-only responses. Cursor identity survives session refresh. Expired-history rebuilds preserve transaction edits and import provenance. The + menu includes Connect Apple accounts; web Connections explains the iPhone setup path.
+
+The Apple Developer portal shows FinanceKit available but unchecked for **org.gtfol.asset** on **J59ZSG67SJ**. The initial signed build failed because the provisioning profile lacks the capability. Enabling it is awaiting user confirmation under the browser permission policy. Build **0.1.0 (6)** is prepared, but has not been uploaded to TestFlight. Production FinanceKit is still disabled. Real Wallet consent and sync require a physical iPhone and remain unverified; synchronization runs on foreground unlock or manual refresh, without a background extension.
+
 ## October 24: record-level bank and edit sync
 
 Migration 014 adds an owner-isolated, RLS-protected change journal. Changed records, removals, and small settings values are recorded atomically with the workspace revision. Web and iOS build 5 request deltas and persist a confirmed base for offline replay; old clients, first sign-in, journal gaps, and oversized changes retain a complete-snapshot fallback. The journal is bounded to 256 commits and 256 KiB per commit. No existing financial records are deleted or migrated out of the canonical workspace.

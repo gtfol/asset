@@ -2650,3 +2650,15 @@ dialog label {
  .workspace-empty { padding-top: 56px; }
  .workspace-empty h2 { font-size: 28px; font-weight: 400; margin: 0 0 12px; }
  .workspace-empty .button-row { margin: 24px 0 16px; }
+
+.dashboard-review-row { display: flex; align-items: center; gap: 4px; }
+.dashboard-review-row .transaction-row { display: grid; min-width: 0; grid-template-columns: minmax(0, 1fr) auto; gap: 16px; }
+.dashboard-review-row .amount { white-space: nowrap; }
+.dashboard-review-row .row-merchant small { white-space: normal; }
+.review-select { display: flex; align-items: center; justify-content: center; flex: 0 0 44px; min-height: 44px; margin: 0; }
+.review-select input { margin: 0; }
+.review-actions { gap: 8px; flex-wrap: wrap; }
+.review-actions > span { margin-right: auto; }
+.review-undo { display: flex; align-items: center; gap: 16px; min-height: 44px; font-size: 13px; color: var(--muted); }
+.review-undo button { min-height: 44px; }
+.review-empty { padding: 16px 0; font-size: 14px; }

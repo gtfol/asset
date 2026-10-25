@@ -11,6 +11,7 @@ private func transactionKindLabel(_ kind: String) -> String {
 struct FormShell<Content: View>: View {
   @Environment(\.dismiss) var dismiss
   let title: String
+  var saveTitle = "Save"
   var save: () async throws -> Void
   @ViewBuilder var content: Content
   @State var error = ""
@@ -25,7 +26,7 @@ struct FormShell<Content: View>: View {
           ToolbarItem(placement: .topBarLeading) { Button("Cancel") { dismiss() } }
             .quietBackground()
           ToolbarItem(placement: .confirmationAction) {
-            Button(saving ? "Saving…" : "Save") {
+            Button(saving ? "Saving…" : saveTitle) {
               saving = true
               Task {
                 do {
@@ -87,6 +88,7 @@ struct TransactionSetupView: View {
 struct TransactionForm: View {
   @EnvironmentObject var store: Store
   var transaction: Row?
+  var reviewMode = false
   @State var name = ""
   @State var date = dateToday()
   @State var amount = ""
@@ -104,7 +106,7 @@ struct TransactionForm: View {
   @State var splits: [SplitDraft] = []
   @State var loaded = false
   var body: some View {
-    FormShell(title: transaction == nil ? "Add transaction" : "Transaction detail", save: save) {
+    FormShell(title: transaction == nil ? "Add transaction" : "Transaction detail", saveTitle: reviewMode ? "Review" : "Save", save: save) {
       Section {
         TextField("Merchant or description", text: $name)
         TextField("Date · YYYY-MM-DD", text: $date).keyboardType(.numbersAndPunctuation)
@@ -123,7 +125,7 @@ struct TransactionForm: View {
         TextField("Notes", text: $notes, axis: .vertical).lineLimit(3...6)
         TextField("Recurring payment label (optional)", text: $recurring)
         Toggle("Exclude from budget", isOn: $excluded)
-        Toggle("Reviewed", isOn: $reviewed)
+        if !reviewMode { Toggle("Reviewed", isOn: $reviewed) }
       }
       if transaction != nil {
         Section("Future imports") {
@@ -188,7 +190,7 @@ struct TransactionForm: View {
         notes = t.text("notes")
         recurring = t.text("recurring")
         excluded = t.flag("excluded")
-        reviewed = t.flag("reviewed")
+        reviewed = reviewMode || t.flag("reviewed")
         splits = t.rows("splits").map {
           SplitDraft(
             id: $0.id, category: $0.text("categoryId"), amount: String($0.number("amount") / 100),
@@ -238,7 +240,7 @@ struct TransactionForm: View {
             "name": name, "date": date, "categoryId": category, "kind": kind, "notes": notes,
             "excluded": excluded,
             "recurring": recurring,
-          ], "reviewed": reviewed,
+          ], "reviewed": reviewMode ? t.flag("reviewed") : reviewed,
         ])
       if splitting && !reconciling {
         try await store.command("transaction.split", ["id": t.id, "splits": parts])
@@ -250,6 +252,9 @@ struct TransactionForm: View {
             "id": uid(), "merchant": t.text("name"), "match": "exact",
             "accountId": globalRule ? NSNull() : account as Any, "categoryId": category,
           ])
+      }
+      if reviewMode {
+        try await store.command("transactions.review", ["ids": [t.id], "reviewed": true])
       }
     } else {
       try await store.command(

@@ -1,3 +1,4 @@
+import { ReviewQueue } from './review-queue';
 import { Workspace } from './workspace';
 import { Modal } from './components';
 import { loanLenders } from '../shared/loans';
@@ -129,7 +130,9 @@ export function App() {
       const failure = new URLSearchParams(window.location.search).get('auth_error');
       return failure === 'access_restricted'
         ? 'Cloud access is limited to the owner of this Asset instance.'
-        : failure ? 'Google sign-in could not be completed. Please try again.' : '';
+        : failure
+          ? 'Google sign-in could not be completed. Please try again.'
+          : '';
     }),
     [notice, setNotice] = useState(''),
     [sidebar, setSidebar] = useState(false),
@@ -147,24 +150,40 @@ export function App() {
   latestState.current = state;
   const [bitcoinError, setBitcoinError] = useState('');
   const workspace = useRef<Workspace | null>(null);
-  if (!workspace.current) workspace.current = new Workspace(api, () => {
-    const w = workspace.current!;
-    if (!w.doc) return;
-    setState(w.doc.state); setRevision(w.doc.revision); revisionRef.current = w.doc.revision;
-    setSignedIn(!!w.doc.owner); setSyncStatus(w.status); setSyncConflict(w.conflict);
-    setConnections(w.metadata.connections ?? []); setConfigured(w.metadata.plaidConfigured ?? false);
-    setSessionId(w.metadata.sessionId ?? '');
-  });
+  if (!workspace.current)
+    workspace.current = new Workspace(api, () => {
+      const w = workspace.current!;
+      if (!w.doc) return;
+      setState(w.doc.state);
+      setRevision(w.doc.revision);
+      revisionRef.current = w.doc.revision;
+      setSignedIn(!!w.doc.owner);
+      setSyncStatus(w.status);
+      setSyncConflict(w.conflict);
+      setConnections(w.metadata.connections ?? []);
+      setConfigured(w.metadata.plaidConfigured ?? false);
+      setSessionId(w.metadata.sessionId ?? '');
+    });
   const initialization = useRef<Promise<void> | null>(null);
   const load = useCallback(async () => {
     try {
       if (!initialization.current) initialization.current = workspace.current!.open();
-      await initialization.current; setLoading(false); await workspace.current!.sync();
-    } catch (e: any) { setError(e.message); setLoading(false); }
+      await initialization.current;
+      setLoading(false);
+      await workspace.current!.sync();
+    } catch (e: any) {
+      setError(e.message);
+      setLoading(false);
+    }
   }, []);
   const signIn = async () => {
-    try { clearPlaidAttempt(); const { url } = await api('/auth/google/start', {}); window.location.assign(url); }
-    catch (e: any) { setError(e.message); }
+    try {
+      clearPlaidAttempt();
+      const { url } = await api('/auth/google/start', {});
+      window.location.assign(url);
+    } catch (e: any) {
+      setError(e.message);
+    }
   };
   const bitcoinRequest: BitcoinRequest = useCallback(
     async (path, body = {}) => {
@@ -173,7 +192,8 @@ export function App() {
       if (!workspace.current!.doc.owner || workspace.current!.doc.pending.length)
         throw Error('Sign in and finish syncing saved changes before connecting an account.');
       const r = await api(path, body, 'POST', sessionId);
-      if (generation !== sessionGeneration.current) throw Error('Workspace changed during Bitcoin sync');
+      if (generation !== sessionGeneration.current)
+        throw Error('Workspace changed during Bitcoin sync');
       await workspace.current!.accept(r);
     },
     [sessionId],
@@ -231,13 +251,24 @@ export function App() {
     }
   }, [state, plaidReturn]);
   const run: Run = useCallback(async (command: Command) => {
-    try { await workspace.current!.command(command); setNotice('Changes saved'); }
-    catch (e: any) { setError(e.message); throw e; }
+    try {
+      await workspace.current!.command(command);
+      setNotice('Changes saved');
+    } catch (e: any) {
+      setError(e.message);
+      throw e;
+    }
   }, []);
   useEffect(() => {
-    const wake = () => { if (document.visibilityState === 'visible') void load(); };
-    window.addEventListener('online', wake); document.addEventListener('visibilitychange', wake);
-    return () => { window.removeEventListener('online', wake); document.removeEventListener('visibilitychange', wake); };
+    const wake = () => {
+      if (document.visibilityState === 'visible') void load();
+    };
+    window.addEventListener('online', wake);
+    document.addEventListener('visibilitychange', wake);
+    return () => {
+      window.removeEventListener('online', wake);
+      document.removeEventListener('visibilitychange', wake);
+    };
   }, [load]);
   const navigate = (name: string) => {
     setPage(name);
@@ -277,7 +308,15 @@ export function App() {
         <p>Opening your workspace…</p>
       </div>
     );
-  if (!state) return <div className="boot"><p role="alert">{error || 'Opening your saved data…'}</p><button className="border-button" onClick={() => window.location.reload()}>Try again</button></div>;
+  if (!state)
+    return (
+      <div className="boot">
+        <p role="alert">{error || 'Opening your saved data…'}</p>
+        <button className="border-button" onClick={() => window.location.reload()}>
+          Try again
+        </button>
+      </div>
+    );
   const d = dashboardView?.data,
     worth = dashboardView?.worth,
     currency = state.settings.currency;
@@ -350,11 +389,15 @@ export function App() {
             <span className="avatar">A</span>
             <span>
               My workspace
-              <small>
-                {syncStatus}
-              </small>
+              <small>{syncStatus}</small>
             </span>
-            <button className="icon-button" aria-label="Sync settings" onClick={() => setModal({ kind: 'sync' })}><Link2 size={15} /></button>
+            <button
+              className="icon-button"
+              aria-label="Sync settings"
+              onClick={() => setModal({ kind: 'sync' })}
+            >
+              <Link2 size={15} />
+            </button>
           </div>
         </div>
       </aside>
@@ -390,7 +433,7 @@ export function App() {
             <button
               className="primary small"
               aria-label={
-                (page === 'Accounts' || !state.accounts.length)
+                page === 'Accounts' || !state.accounts.length
                   ? 'Add account'
                   : page === 'Categories'
                     ? 'Add category'
@@ -401,7 +444,7 @@ export function App() {
               onClick={() =>
                 setModal({
                   kind:
-                    (page === 'Accounts' || !state.accounts.length)
+                    page === 'Accounts' || !state.accounts.length
                       ? 'account'
                       : page === 'Categories'
                         ? 'category'
@@ -413,7 +456,7 @@ export function App() {
             >
               <Plus size={16} />
               <span>
-                {(page === 'Accounts' || !state.accounts.length)
+                {page === 'Accounts' || !state.accounts.length
                   ? 'Account'
                   : page === 'Categories'
                     ? 'Category'
@@ -441,8 +484,12 @@ export function App() {
             <h2>Your finances, in one place.</h2>
             <p className="muted">Add an account or import your transactions to get started.</p>
             <div className="button-row">
-              <button className="primary" onClick={() => setModal({ kind: 'account' })}>Add an account</button>
-              <button className="border-button" onClick={() => setModal({ kind: 'import' })}>Import transactions</button>
+              <button className="primary" onClick={() => setModal({ kind: 'account' })}>
+                Add an account
+              </button>
+              <button className="border-button" onClick={() => setModal({ kind: 'import' })}>
+                Import transactions
+              </button>
             </div>
             <p className="tiny muted">Saved on this device. Sync anytime from Settings.</p>
           </div>
@@ -531,50 +578,14 @@ export function App() {
                 </div>
               </section>
               <WorthCard worth={worth} currency={currency} onOpen={() => navigate('Accounts')} />
-              <section className="card review-card">
-                <div className="card-heading">
-                  <h3>
-                    To review <span className="count">{review.length}</span>
-                  </h3>
-                  <button onClick={() => txNavigate({ review: 'unreviewed' })}>
-                    View all
-                    <ChevronRight size={13} />
-                  </button>
-                </div>
-                {review.length ? (
-                  <>
-                    <TransactionRows
-                      state={state}
-                      items={review.slice(0, 5)}
-                      onOpen={(t) => {
-                        navigate('Transactions');
-                        setSelected(t.id);
-                      }}
-                    />
-                    <div className="card-footer">
-                      <span>
-                        {Math.min(review.length, 5)} of {review.length} transactions
-                      </span>
-                      <button
-                        className="border-button"
-                        onClick={() =>
-                          void run({
-                            type: 'transactions.review',
-                            payload: { ids: review.slice(0, 5).map((t) => t.id), reviewed: true },
-                          }).catch(() => {})
-                        }
-                      >
-                        <Check size={14} />
-                        Mark these {Math.min(review.length, 5)} reviewed
-                      </button>
-                    </div>
-                  </>
-                ) : (
-                  <Empty title="Nothing to review">
-                    New imports will appear here for your review.
-                  </Empty>
-                )}
-              </section>
+              <ReviewQueue
+                key={sessionId || 'local'}
+                state={state}
+                items={review}
+                run={run}
+                onOpen={setSelected}
+                onViewAll={() => txNavigate({ review: 'unreviewed' })}
+              />
               <section className="card">
                 <div className="card-heading">
                   <h3>Trending budgets</h3>
@@ -697,10 +708,11 @@ export function App() {
           <CashFlow state={state} run={run} month={month} setMonth={setMonth} drill={txNavigate} />
         )}
       </main>
-      {page === 'Transactions' && tx && (
+      {['Dashboard', 'Transactions'].includes(page) && tx && (
         <TransactionEditor
           key={tx.id}
           transaction={tx}
+          reviewMode={page === 'Dashboard' && !tx.reviewed}
           state={state}
           run={run}
           onClose={() => setSelected(null)}
@@ -731,7 +743,16 @@ export function App() {
         <ImportDialog state={state} run={run} onClose={() => setModal(null)} />
       )}
       {modal?.kind === 'settings' && (
-        <SettingsDialog state={state} run={run} sync={<button className="border-button" onClick={() => setModal({ kind: 'sync' })}>{signedIn ? 'Sync settings' : 'Sign in to sync'}</button>} onClose={() => setModal(null)} />
+        <SettingsDialog
+          state={state}
+          run={run}
+          sync={
+            <button className="border-button" onClick={() => setModal({ kind: 'sync' })}>
+              {signedIn ? 'Sync settings' : 'Sign in to sync'}
+            </button>
+          }
+          onClose={() => setModal(null)}
+        />
       )}
       {modal?.kind === 'notifications' && (
         <NotificationsDialog
@@ -766,27 +787,80 @@ export function App() {
           }}
         />
       )}
-      {verificationRequired && <Modal title="Verify this device" onClose={() => setVerificationRequired(false)}>
-        <DeviceVerification onReady={async () => { setVerificationRequired(false); await load(); }} />
-      </Modal>}
+      {verificationRequired && (
+        <Modal title="Verify this device" onClose={() => setVerificationRequired(false)}>
+          <DeviceVerification
+            onReady={async () => {
+              setVerificationRequired(false);
+              await load();
+            }}
+          />
+        </Modal>
+      )}
       {(modal?.kind === 'sync' || (modal?.kind === 'connections' && !sessionId)) && (
-        <Modal title={modal.kind === 'connections' ? 'Connect your accounts' : 'Sync'} onClose={() => setModal(null)}>
-          <p className="muted">{signedIn ? syncStatus : 'Your changes are saved on this device. Sign in to sync across devices and connect bank accounts.'}</p>
-          {!sessionId && <button className="primary" onClick={() => void signIn()}>Continue with Google</button>}
-          {sessionId && <div className="button-row">
-            <button className="border-button" onClick={() => void load()}>Sync now</button>
-            <button className="border-button" onClick={async () => {
-              try { await workspace.current!.signOut(); sessionGeneration.current++; clearPlaidAttempt(); setModal(null); setSelected(null); }
-              catch (e: any) { setError(e.message); }
-            }}>Sign out</button>
-          </div>}
-          {syncConflict && <section>
-            <p>Your edits are saved here. Export a backup in Settings before choosing the synced version.</p>
-            <button className="border-button" onClick={async () => {
-              if (!window.confirm('Use the synced version? Your local version will be kept as a recovery copy on this device.')) return;
-              try { await workspace.current!.useSyncedChanges(); } catch (e: any) { setError(e.message); }
-            }}>Use synced version</button>
-          </section>}
+        <Modal
+          title={modal.kind === 'connections' ? 'Connect your accounts' : 'Sync'}
+          onClose={() => setModal(null)}
+        >
+          <p className="muted">
+            {signedIn
+              ? syncStatus
+              : 'Your changes are saved on this device. Sign in to sync across devices and connect bank accounts.'}
+          </p>
+          {!sessionId && (
+            <button className="primary" onClick={() => void signIn()}>
+              Continue with Google
+            </button>
+          )}
+          {sessionId && (
+            <div className="button-row">
+              <button className="border-button" onClick={() => void load()}>
+                Sync now
+              </button>
+              <button
+                className="border-button"
+                onClick={async () => {
+                  try {
+                    await workspace.current!.signOut();
+                    sessionGeneration.current++;
+                    clearPlaidAttempt();
+                    setModal(null);
+                    setSelected(null);
+                  } catch (e: any) {
+                    setError(e.message);
+                  }
+                }}
+              >
+                Sign out
+              </button>
+            </div>
+          )}
+          {syncConflict && (
+            <section>
+              <p>
+                Your edits are saved here. Export a backup in Settings before choosing the synced
+                version.
+              </p>
+              <button
+                className="border-button"
+                onClick={async () => {
+                  if (
+                    !window.confirm(
+                      'Use the synced version? Your local version will be kept as a recovery copy on this device.',
+                    )
+                  )
+                    return;
+                  try {
+                    await workspace.current!.useSyncedChanges();
+                  } catch (e: any) {
+                    setError(e.message);
+                  }
+                }}
+              >
+                Use synced version
+              </button>
+            </section>
+          )}
         </Modal>
       )}
     </div>

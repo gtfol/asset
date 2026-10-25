@@ -2,7 +2,7 @@ import SwiftUI
 
 struct RootView: View {
   enum AddAction: String, Identifiable {
-    case transaction, account, bitcoin, holding, category
+    case transaction, account, apple, bitcoin, holding, category
     var id: String { rawValue }
   }
   @EnvironmentObject var store: Store
@@ -79,6 +79,7 @@ struct RootView: View {
                 Menu {
                   Button("Add transaction") { addAction = .transaction }
                   Button("Add account") { addAction = .account }
+                  Button("Connect Apple accounts") { addAction = .apple }
                   Button("Add Bitcoin wallet") { addAction = .bitcoin }
                   Button("Add holding") { addAction = .holding }
                   Button("Add category") { addAction = .category }
@@ -92,6 +93,7 @@ struct RootView: View {
             .sheet(item: $addAction) { action in
               switch action {
               case .account: AccountForm()
+              case .apple: AppleAccountSetupView()
               case .bitcoin: BitcoinWalletSetupView()
               case .category: CategoryForm()
               case .holding: HoldingForm()
@@ -123,13 +125,11 @@ struct RootView: View {
 struct DashboardView: View {
   @EnvironmentObject var store: Store
   @Binding var month: String
-  @State var reviewAll = false
   @State private var addAccount = false
   @State private var addBitcoin = false
   var body: some View {
     let d = store.calculation("dashboard", [month])
     let w = store.calculation("netWorth")
-    let review = store.transactions.filter { !$0.flag("reviewed") }
     ScrollView {
       VStack(spacing: 16) {
         if store.accounts.isEmpty {
@@ -207,26 +207,7 @@ struct DashboardView: View {
               .foregroundStyle(Color.assetSecondary)
           }
         }
-        Card(title: "To review · \(review.count)") {
-          if review.isEmpty {
-            Label("All caught up", systemImage: "checkmark.circle").foregroundStyle(
-              Color.assetSecondary)
-          }
-          ForEach(Array(review.prefix(5))) { t in
-            NavigationLink {
-              TransactionForm(transaction: t)
-            } label: {
-              TransactionLine(tx: t)
-            }.buttonStyle(.plain)
-            Divider()
-          }
-          if !review.isEmpty {
-            Button("Mark these \(min(5,review.count)) reviewed") {
-              store.perform(
-                "transactions.review", ["ids": review.prefix(5).map(\.id), "reviewed": true])
-            }.font(.custom("Lato-Regular", size: 15, relativeTo: .subheadline))
-          }
-        }
+        DashboardReviewQueue().id(store.workspaceGeneration)
         Card(title: "Net worth") {
           Metric(title: "Assets minus debt", value: money(w.data["total"], store.currency))
           HistoryChart(
@@ -261,5 +242,93 @@ struct DashboardView: View {
         }
       }.padding(20)
     }.refreshable { await store.refresh() }
+  }
+}
+
+struct DashboardReviewQueue: View {
+  @EnvironmentObject var store: Store
+  @State private var selected = Set<String>()
+  @State private var undoIDs: [String] = []
+  @State private var working = false
+  @State private var editing: Row?
+  private var review: [Row] { store.transactions.filter { !$0.flag("reviewed") } }
+  private var visible: [Row] { Array(review.prefix(6)) }
+  private var chosen: [String] { visible.filter { selected.contains($0.id) }.map(\.id) }
+  var body: some View {
+    Card {
+      HStack {
+        Text("To review · \(review.count)")
+          .font(.custom("Lato-Regular", size: 17, relativeTo: .headline))
+          .foregroundStyle(Color.assetSecondary)
+        Spacer()
+        NavigationLink("View all") { TransactionsView(initialReview: true) }
+          .frame(minHeight: 44)
+      }
+      if visible.isEmpty {
+        Text("All caught up.").foregroundStyle(Color.assetSecondary).padding(.vertical, 12)
+      }
+      ForEach(Array(visible.enumerated()), id: \.element.id) { index, transaction in
+        if index == 0 || visible[index - 1].text("date") != transaction.text("date") {
+          Text(transaction.text("date"))
+            .font(.custom("Lato-Regular", size: 13, relativeTo: .caption))
+            .foregroundStyle(Color.assetSecondary).padding(.top, 8)
+        }
+        HStack(spacing: 4) {
+          Button {
+            if selected.contains(transaction.id) { selected.remove(transaction.id) }
+            else { selected.insert(transaction.id) }
+          } label: {
+            Image(systemName: selected.contains(transaction.id) ? "checkmark.square" : "square")
+              .frame(width: 44, height: 44)
+          }.accessibilityLabel("Select \(transaction.text("name")) for review")
+            .accessibilityIdentifier("review-select-\(transaction.id)")
+            .accessibilityValue(selected.contains(transaction.id) ? "Selected" : "Not selected")
+            .disabled(working)
+          Button { editing = transaction } label: { TransactionLine(tx: transaction, showCategory: true) }
+            .frame(minHeight: 44).buttonStyle(.plain)
+            .accessibilityIdentifier("review-open-\(transaction.id)")
+        }
+        Divider()
+      }
+      if !visible.isEmpty {
+        ViewThatFits(in: .horizontal) {
+          HStack { reviewCount; Spacer(); reviewButton }
+          VStack(alignment: .leading, spacing: 8) { reviewCount; reviewButton }
+        }
+        if !chosen.isEmpty { Button("Clear selection") { selected = [] }.frame(minHeight: 44) }
+      }
+      if !undoIDs.isEmpty {
+        HStack {
+          Text("\(undoIDs.count) reviewed").foregroundStyle(Color.assetSecondary)
+          Button("Undo") {
+            let current = Set(store.transactions.filter { $0.flag("reviewed") }.map(\.id))
+            commit(undoIDs.filter { current.contains($0) }, reviewed: false)
+          }.disabled(working).frame(minHeight: 44)
+        }.font(.custom("Lato-Regular", size: 13, relativeTo: .caption))
+      }
+    }.font(.custom("Lato-Regular", size: 15, relativeTo: .subheadline)).buttonStyle(.plain)
+      .sheet(item: $editing) { TransactionForm(transaction: $0, reviewMode: true) }
+  }
+  private var reviewCount: some View {
+    Text(chosen.isEmpty ? "\(visible.count) of \(review.count)" : "\(chosen.count) selected")
+      .font(.custom("Lato-Regular", size: 13, relativeTo: .caption)).foregroundStyle(Color.assetSecondary)
+  }
+  private var reviewButton: some View {
+    Button(working ? "Saving…" : "Review \(chosen.isEmpty ? visible.count : chosen.count) \(chosen.isEmpty ? "shown" : "selected")") {
+      commit(chosen.isEmpty ? visible.map(\.id) : chosen, reviewed: true)
+    }.buttonStyle(AssetBorderButtonStyle()).disabled(working || store.busy)
+  }
+  private func commit(_ ids: [String], reviewed: Bool) {
+    guard !working, !ids.isEmpty else { return }
+    let generation = store.workspaceGeneration
+    working = true
+    Task { @MainActor in
+      defer { working = false }
+      do {
+        try await store.command("transactions.review", ["ids": ids, "reviewed": reviewed])
+        guard generation == store.workspaceGeneration else { return }
+        selected = []; undoIDs = reviewed ? ids : []
+      } catch { if generation == store.workspaceGeneration { store.error = error.localizedDescription } }
+    }
   }
 }

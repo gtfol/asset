@@ -13,6 +13,7 @@ export type RecordFilter = {
   connection?: { id: string; date?: string };
   accountId?: string;
   date?: string;
+  latestAppleBalance?: { accountId: string; excluding: string[] };
   effectiveDayAt?: string;
   holdingDay?: { id: string; at: string };
 };
@@ -23,6 +24,10 @@ export type StateScope = Partial<Record<typeof scopedCollections[number], Record
 export function scopedStateSQL(): string {
   const projections = scopedCollections.map(collection => {
     const f = `($2::jsonb->'${collection}')`, r = 'record';
+    const latestApple = collection === 'snapshots' ? `OR CASE WHEN ${f} ? 'latestAppleBalance' THEN ${r}->>'id'=(SELECT b->>'id' FROM jsonb_array_elements(state->'snapshots') b
+      WHERE b->>'accountId'=${f}#>>'{latestAppleBalance,accountId}' AND b->>'source'='financekit'
+        AND NOT (COALESCE(${f}#>'{latestAppleBalance,excluding}','[]'::jsonb) ? (b->>'id'))
+      ORDER BY COALESCE(b->>'asOf',b->>'date') DESC LIMIT 1) ELSE false END` : '';
     const predicate = `COALESCE((${f}->>'all')::boolean,false)
       OR (${f}->'ids') ? (${r}->>'id')
       OR (${f}->'amounts') ? (${r}->>'amount')
@@ -35,9 +40,10 @@ export function scopedStateSQL(): string {
       OR (COALESCE(${r}#>>'{edits,date}',${r}->>'date')=to_char((${f}->>'effectiveDayAt')::timestamptz AT TIME ZONE (state#>>'{settings,timezone}'),'YYYY-MM-DD'))
       OR ((${r}->>'holdingId'=${f}#>>'{holdingDay,id}' AND ${r}->>'date'=to_char((${f}#>>'{holdingDay,at}')::timestamptz AT TIME ZONE (state#>>'{settings,timezone}'),'YYYY-MM-DD'))
         OR ${r}->>'id'='holding-snapshot-' || (${f}#>>'{holdingDay,id}') || '-' || to_char((${f}#>>'{holdingDay,at}')::timestamptz AT TIME ZONE (state#>>'{settings,timezone}'),'YYYY-MM-DD'))`;
+    const filtered = `${predicate} ${latestApple}`;
     return `'${collection}', COALESCE((SELECT jsonb_agg(
       CASE WHEN (${f}->'known'->(record->>'id'))=record THEN jsonb_build_object('_asset_known',record->>'id') ELSE record END
-      ORDER BY ordinal) FROM jsonb_array_elements(COALESCE(state->'${collection}','[]'::jsonb)) WITH ORDINALITY AS entries(record,ordinal) WHERE ${predicate}),'[]'::jsonb)`;
+      ORDER BY ordinal) FROM jsonb_array_elements(COALESCE(state->'${collection}','[]'::jsonb)) WITH ORDINALITY AS entries(record,ordinal) WHERE ${filtered}),'[]'::jsonb)`;
   });
   return `(state - ARRAY[${scopedCollections.map(c => `'${c}'`).join(',')}]) || jsonb_build_object(${projections.join(',')})`;
 }

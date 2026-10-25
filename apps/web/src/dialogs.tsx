@@ -55,11 +55,13 @@ function CategorySelect({
 }
 export function TransactionEditor({
   transaction,
+  reviewMode = false,
   state,
   run,
   onClose,
 }: {
   transaction: Transaction;
+  reviewMode?: boolean;
   state: State;
   run: Run;
   onClose: () => void;
@@ -85,7 +87,7 @@ export function TransactionEditor({
   const targetAmount = reconciling
     ? Math.abs(parseMoney(Number(t.raw?.amount).toFixed(2)))
     : t.amount;
-  async function save() {
+  async function save(markReviewed = false) {
     setBusy(true);
     try {
       await run({
@@ -101,7 +103,7 @@ export function TransactionEditor({
             recurring: draft.recurring ?? '',
             excluded: draft.excluded,
           },
-          reviewed: draft.reviewed,
+          reviewed: markReviewed ? t.reviewed : draft.reviewed,
         },
       });
       if (rule)
@@ -115,6 +117,8 @@ export function TransactionEditor({
             categoryId: draft.categoryId,
           },
         });
+      if (markReviewed)
+        await run({ type: 'transactions.review', payload: { ids: [t.id], reviewed: true } });
       onClose();
     } catch (e: any) {
       setError(e.message);
@@ -330,8 +334,21 @@ export function TransactionEditor({
         <button className="border-button" onClick={onClose}>
           Cancel
         </button>
-        <button className="primary" disabled={busy} onClick={() => void save()}>
-          {busy ? 'Saving…' : 'Save changes'}
+        {reviewMode && (
+          <button
+            className="border-button"
+            disabled={busy || splitting}
+            onClick={() => void save()}
+          >
+            Save only
+          </button>
+        )}
+        <button
+          className="primary"
+          disabled={busy || splitting}
+          onClick={() => void save(reviewMode)}
+        >
+          {busy ? 'Saving…' : reviewMode ? 'Save & review' : 'Save changes'}
         </button>
       </footer>
     </aside>
@@ -1124,7 +1141,15 @@ export function SettingsDialog({
   return (
     <Modal title="Settings & data" onClose={onClose}>
       {sync}
-      <p className="tiny muted"><a href="/privacy" target="_blank" rel="noreferrer">Privacy</a> · <a href="/terms" target="_blank" rel="noreferrer">Terms</a></p>
+      <p className="tiny muted">
+        <a href="/privacy" target="_blank" rel="noreferrer">
+          Privacy
+        </a>{' '}
+        ·{' '}
+        <a href="/terms" target="_blank" rel="noreferrer">
+          Terms
+        </a>
+      </p>
       <NotificationPreferences state={state} run={run} />
       <HistoryMatches state={state} run={run} />
       <label className="theme-control">

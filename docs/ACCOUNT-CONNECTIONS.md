@@ -1,6 +1,6 @@
 # Account connection coverage
 
-Venmo supports receipt forwarding on web and iOS. Apple FinanceKit synchronization is implemented but disabled until Apple approves the managed entitlement. Bitcoin address tracking is independent of Plaid.
+Venmo supports receipt forwarding on web and iOS. Apple FinanceKit synchronization is implemented for iPhone build 6; activation and a signed distribution build are pending. Bitcoin address tracking is independent of Plaid.
 
 | Account | Current path | Remaining work |
 | --- | --- | --- |
@@ -8,7 +8,7 @@ Venmo supports receipt forwarding on web and iOS. Apple FinanceKit synchronizati
 | Brokerage and retirement | Plaid Investments connection | Availability depends on institution and enabled products. Avoid importing the same account twice through banking and investment connections. |
 | Bitcoin addresses | Public-address tracking, live polling and historical USD valuations | Resumable backfill for addresses over 500 transfers; exchange purchase-cost imports. |
 | Venmo | `venmo@receipts.gtfol.dev` for verified source mailboxes, matching to imported history, review queue; see [setup](VENMO.md). | Wallet balances and a dedicated statement adapter remain separate. |
-| Apple Card, Cash, Savings | Imported/manual history; FinanceKit implementation gated pending approval | Managed entitlement approval and physical-device end-to-end verification. |
+| Apple Card, Cash, Savings | iPhone FinanceKit connection with imported-account matching and incremental sync | Enable the approved App ID capability, refresh provisioning, distribute build 6, and verify consent/sync on a physical iPhone. |
 | Santander Consumer USA, Synchrony Pay Later | Manual loan account, APR, scheduled payment, due date, dated statement balance | No exact matching Plaid institution was found in the October 17 dashboard check. Santander Personal and Synchrony Bank point to different portals. No direct portal scraping or credential storage. |
 | Physical cash, unsupported assets | Manual accounts and dated balance snapshots | No credentials needed. |
 
@@ -20,9 +20,9 @@ Venmo also provides statement CSV downloads. Generic CSV imports remain availabl
 
 ## Apple milestone
 
-Apple's FinanceKit supplies consent-based on-device access to supported Apple Card, Apple Cash and Savings data in the US. It requires an approved managed entitlement for `org.gtfol.asset`. The gtfol organization signing team and Finance-category App Store Connect record are configured. The agreement was accepted and request **739VT6P73Z** submitted on October 18, 2026. Apple's review and entitlement approval are pending.
+Apple's FinanceKit supplies consent-based on-device access to supported Apple Card, Apple Cash and Savings data in the US. It requires an approved managed entitlement for `org.gtfol.asset`. The gtfol organization signing team and Finance-category App Store Connect record are configured. The agreement was accepted and request **739VT6P73Z** submitted on October 18, 2026. The user reported approval on October 25. The Developer portal now exposes FinanceKit for the correct App ID, but the capability remains unchecked; permission to enable it is pending.
 
-The iPhone implementation requests consent before reading and uploading selected accounts, maps existing imported accounts, synchronizes transaction/balance changes with protected durable cursors, and removes synced Apple records on disconnect while restoring independently imported history. Sync runs on foreground unlock and explicit refresh. Cloud access requires authenticator verification on new sessions. Tests cover idempotency, imported edits, deletion, verification and owner isolation. No background extension or real Wallet sync is claimed. Enable both `AssetFinanceKitEnabled` and server `FINANCEKIT_ENABLED` only after approval, provisioning, and device testing.
+The iPhone implementation requests consent before reading and uploading selected accounts, maps existing imported accounts, synchronizes transaction/balance changes with protected durable cursors, and removes synced Apple records on disconnect while restoring independently imported history. Sync runs on foreground unlock and explicit refresh. Cloud access requires authenticator verification on new sessions. Tests cover idempotency, imported edits, deletion, verification and owner isolation. No background extension or real Wallet sync is claimed. Build 6 includes `AssetFinanceKitEnabled` and the FinanceKit entitlement. Production `FINANCEKIT_ENABLED` remains off until the approved capability is enabled and distribution signing succeeds. Physical-device consent and Wallet sync still need verification. Ordinary Apple updates read and transfer only changed records and matching import candidates. Cursors are scoped to the owner, device storage, account, and consent rather than a rotating session token. Expired cursors preserve transaction edits while rebuilding provider history.
 
 ## Copilot migration
 

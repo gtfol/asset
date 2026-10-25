@@ -408,13 +408,15 @@ func historyPoints(_ rows: [Row], key: String = "value", range: String = "ALL") 
 struct TransactionLine: View {
   @EnvironmentObject var store: Store
   let tx: Row
+  var showCategory = false
   var body: some View {
     HStack(spacing: 12) {
       let c = store.category(id: tx.text("categoryId")) ?? Row()
       CategoryIcon(category: c)
       VStack(alignment: .leading, spacing: 4) {
         Text(tx.text("name")).font(.custom("Lato-Regular", size: 15, relativeTo: .subheadline))
-        Text(store.account(id: tx.text("accountId"))?.text("name") ?? "Account")
+        Text((store.account(id: tx.text("accountId"))?.text("name") ?? "Account")
+          + (showCategory ? " · \(c.text("name", "Other"))" : ""))
           .font(.custom("Lato-Regular", size: 12, relativeTo: .caption2)).foregroundStyle(
             Color.assetSecondary)
         if tx.flag("pending") || tx.flag("excluded") {

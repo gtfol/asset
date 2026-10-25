@@ -36,7 +36,7 @@ import SwiftUI
   func sync(store: Store) async {
     guard Self.enabled, !working, store.mode == "remote", !store.isDemo, !store.verificationRequired else { return }
     working = true; message = ""; defer { working = false }
-    guard let token = SessionKey.read() else { return }
+    guard let token = SessionKey.read(), let owner = store.owner else { return }
     let generation = store.workspaceGeneration, server = store.baseURL
     func current() throws {
       try Task.checkCancellation()
@@ -62,7 +62,7 @@ import SwiftUI
         try current()
         guard let accountID = account["id"] as? String, let provider = account["providerId"] as? String,
           let id = UUID(uuidString: provider) else { continue }
-        let path = try checkpointURL(server + "|" + token + "|" + accountID + "|" + ((account["financekit"] as? JSON)?["consentAt"] as? String ?? ""))
+        let path = try checkpointURL(server + "|" + owner + "|" + accountID + "|" + ((account["financekit"] as? JSON)?["consentAt"] as? String ?? ""))
         var checkpoint = (try? JSONDecoder().decode(Checkpoint.self, from: Data(contentsOf: path))) ?? Checkpoint()
         var sequence = (account["financekit"] as? JSON)?["sequence"] as? Int ?? 0
         func send(_ transactions: [JSON] = [], deleted: [UUID] = [], balances: [JSON] = [], deletedBalances: [UUID] = []) async throws {
@@ -147,7 +147,11 @@ struct AppleAccountsView: View {
     List {
       Section {
         Text("Connect Apple Card, Apple Cash, and Savings accounts available in Wallet on this iPhone.")
-        if !available { Text("Apple account connections are awaiting Apple approval. Your imported Apple history remains available.").foregroundStyle(Color.assetSecondary) }
+        if !AppleAccountSync.enabled {
+          Text("Connect from an iPhone with Apple accounts in Wallet.").foregroundStyle(Color.assetSecondary)
+        } else if !available && message.isEmpty {
+          Text("Apple account syncing is not available right now.").foregroundStyle(Color.assetSecondary)
+        }
       }
       if available && !secured {
         Section { NavigationLink("Set up authenticator") { DeviceVerificationView(enrollment: true, onVerified: { Task { await load() } }) } }
@@ -189,14 +193,17 @@ struct AppleAccountsView: View {
       }
       ForEach(store.accounts.filter { $0.text("source") == "financekit" }) { account in
         Section(account.text("name")) {
-          Text("Synced from your iPhone. Imported history and edits are preserved.").foregroundStyle(Color.assetSecondary)
+          Text("Syncs when you open Asset on your iPhone. Imported history and edits are preserved.").foregroundStyle(Color.assetSecondary)
           Button("Disconnect and remove Apple data", role: .destructive) { removing = account }
         }
       }
       if available { Button(sync.working ? "Syncing…" : "Sync Apple accounts") { Task { await sync.sync(store: store) } }.disabled(sync.working) }
       if !message.isEmpty { Text(message).foregroundStyle(Color.assetSecondary) }
       if !sync.message.isEmpty { Text(sync.message).foregroundStyle(Color.assetSecondary) }
-    }.disabled(working).navigationTitle("Apple accounts").task { await load() }
+    }.disabled(working || sync.working).assetTitle("Apple accounts")
+      .font(.custom("Lato-Regular", size: 15, relativeTo: .subheadline))
+      .listStyle(.plain).scrollContentBackground(.hidden).background(Color.assetBackground)
+      .task(id: store.workspaceGeneration) { accounts = []; targets = [:]; consent = false; configuration = [:]; message = ""; await load() }
       .confirmationDialog("Remove synced Apple data? Your original CSV history is kept. You can also revoke access in iPhone Settings.", isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } })) {
         Button("Remove Apple data", role: .destructive) { if let account = removing { perform { context in
           _ = try await context.request(store, "/apple/disconnect", body: ["accountId": account.id]); await store.refresh(); removing = nil
@@ -213,5 +220,29 @@ struct AppleAccountsView: View {
     let generation = store.workspaceGeneration
     let context = WorkspaceRequest(store)
     Task { @MainActor in defer { working = false }; do { try context.check(store); try await action(context); try context.check(store) } catch { if generation == store.workspaceGeneration { message = error.localizedDescription } } }
+  }
+}
+
+struct AppleAccountSetupView: View {
+  @EnvironmentObject var store: Store
+  @Environment(\.dismiss) private var dismiss
+  @State private var signIn = false
+  var body: some View {
+    NavigationStack {
+      Group {
+        if store.mode == "remote" && !store.isDemo {
+          AppleAccountsView()
+        } else {
+          VStack(alignment: .leading, spacing: 16) {
+            Text("Sign in to sync Apple accounts between your iPhone and Asset.")
+              .foregroundStyle(Color.assetSecondary)
+            Button("Sign in") { signIn = true }.buttonStyle(AssetBorderButtonStyle())
+            Spacer()
+          }.padding(20).assetTitle("Apple accounts")
+        }
+      }.navigationBarTitleDisplayMode(.inline)
+        .toolbar { ToolbarItem(placement: .topBarLeading) { Button("Done") { dismiss() } }.quietBackground() }
+        .sheet(isPresented: $signIn) { SyncSignInView() }
+    }
   }
 }
