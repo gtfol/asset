@@ -47,6 +47,27 @@ function batch(sequence = 1) {
   });
 }
 describe('Apple account syncing', () => {
+  it('categorizes Wallet merchants and preserves a later correction on refresh', () => {
+    let s = fixture();
+    s.categories.push({
+      id: 'groceries',
+      name: 'Groceries',
+      icon: 'groceries',
+      color: '#258465',
+      group: 'Everyday',
+      archived: false,
+    });
+    connectAppleAccount(s, account, now);
+    const receipt = { ...batch().transactions[0], name: 'Safeway #123' };
+    applyAppleBatch(s, { ...batch(), transactions: [receipt] }, now, 'first');
+    expect(s.transactions[0].categoryId).toBe('groceries');
+    s = applyCommand(s, {
+      type: 'transaction.update',
+      payload: { id: s.transactions[0].id, edits: { categoryId: 'food' } },
+    });
+    applyAppleBatch(s, { ...batch(2), transactions: [receipt] }, now, 'second');
+    expect(effective(s.transactions[0]).categoryId).toBe('food');
+  });
   it('pairs imported records once, preserves edits through updates, restores original imports on deletion', () => {
     const s = fixture();
     s.accounts[0].source = 'csv';

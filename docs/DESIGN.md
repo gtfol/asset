@@ -1,21 +1,25 @@
 # Asset interface direction
 
-Asset uses the gtfol Freewrite/Capsule design language with a restrained blue accent for financial charts. The six finance workflows and their information hierarchy come from the inspected Copilot references; surfaces, typography, navigation, and controls follow the user's requested gtfol style.
+The October 25 direction combines Asset's Lato typography and content hierarchy with a warmer, rounded financial interface. The user's latest Copilot screenshots supersede the earlier monochrome, square-control direction. Category symbols remain line icons, without emoji.
 
-- White canvas, near-black text, bundled Lato, thin dividers, and open sections.
-- Main navigation is plain text. The selected section changes from secondary text to primary text, with no colored stripe, selected background, border, shadow, or pill.
-- Blue `#3e6fc6` is used for financial plots and keyboard focus. Dark mode uses `#8aadef`. Reference and estimate lines use neutral colors and different dash patterns; multiseries charts use a restrained blue/slate scale.
-- Primary actions use a neutral text-colored fill and contrasting label. Other actions favor plain text or simple line icons. Controls use a small 2px corner radius instead of rounded pills.
-- Categories use semantic line icons: Lucide on web and monochrome SF Symbols on iOS. Emoji and colored icon badges are not part of the interface. Legacy category icon values resolve to a supported symbol rather than rendering raw emoji.
-- Budget progress bars are neutral. Caution, error, and positive states include readable labels or values, so color is never the only signal.
-- Interface text is generally 13–16px, with secondary labels at 12–13px. Native body, heading, and caption styles start at 15, 17, and 13pt and support Dynamic Type. Normal weight does most of the work; larger tabular numbers serve the financial data.
-- Use 20px mobile gutters and 32px desktop gutters, with consistent spacing and approximately 44px touch targets. Content takes priority over decorative framing.
-- Native controls, Dynamic Type, Swift Charts, and a horizontally accessible six-section navigator on iOS; sidebar and inspector on desktop, drawer and full-width editor on phone.
-- The desktop sidebar is 224px wide. At 850px and below, navigation becomes a drawer and transaction editing uses the available screen width.
-- No ornamental gradients, glass or blur effects, shadows, oversized hero headings, nested dashboard card framing, or remote font service. Native toolbar controls suppress the shared glass background where the platform permits it.
-- Light/dark themes change controls and diagrams; reduced motion disables optional web transitions.
+- Pale blue canvas `#f5f8fc`, white surfaces, navy text `#203354`, and blue actions `#2774dc`.
+- Dark mode uses a deep blue canvas, lighter navy surfaces, and accessible blue/semantic accents.
+- Cards have 22px corners. Primary actions and selected navigation use rounded pills; secondary controls use soft bordered corners. Shadows are subtle and decorative only.
+- Categories have compact colored labels and Lucide/SF Symbols: green groceries/income, orange dining/coffee, teal transport/travel, violet shopping/education, rose entertainment/health, blue home/utilities.
+- Lato text is mostly regular or medium at 13–16px (native 13–17pt). Tabular financial values have more emphasis; large headings do not compete with the data.
+- Use 20px mobile gutters and 32px desktop gutters, at least 44px touch targets, responsive wrapping, Dynamic Type, readable dark appearance, and reduced-motion support.
+- The original Asset logo is a rounded, open A with an upward curved crossbar, white and pale blue on blue. The web SVG, native header, and generated app icon share its geometry.
+- Chart estimates remain visibly distinguished from recorded history. Color always accompanies a label or value.
 
-Web styles live in one canonical [stylesheet](../apps/web/src/style.css), including theme tokens and responsive rules. There is no second override stylesheet. Native shared colors, icons, and section treatments live in [Components.swift](../apps/ios/Asset/UI/Components.swift).
+## Dashboard transaction review
+
+The dashboard presents the latest unreviewed day as a card, showing up to six transactions with merchant, category, amount, and unread dot. There are no selection checkboxes. **Mark as reviewed** reviews only the visible rows, then presents the remaining rows from that day or the next day. Undo restores the most recent batch. View all opens the unreviewed transaction list.
+
+Tapping a transaction opens a rounded detail sheet on iPhone and phone web, with a centered modal on desktop. Merchant, amount, notes, category, account, and review action come first. Category selection is searchable. More details retains the full editing controls, including splits, transaction type, exclusions, and tags. Saving edits does not implicitly mark the item reviewed; the explicit review action runs only after edits succeed.
+
+Merchant suggestions fill uncategorized spending using recognizable merchant patterns and existing categories. Explicit merchant rules take priority. The optional **Use this category next time** action saves or updates an exact merchant rule scoped to the same account. Imported categories, manual category edits, and splits are preserved. There is no external AI classifier or automatic rewrite of existing history.
+
+Web styles live in [style.css](../apps/web/src/style.css). Shared native colors, symbols and cards live in [Components.swift](../apps/ios/Asset/UI/Components.swift).
 
 ## Reference sources
 
@@ -29,8 +33,4 @@ Reviewed source on 2026-10-15 at these pinned revisions. Private source is not c
 
 ## Deliberate differences from Copilot
 
-The recurring engine and its special forecast adjustments are omitted. Asset counts all eligible posted spend, then provides its own disclosed extrapolation beside ideal budget pace. Only calendar Month/Year are available in Cash Flow. Unsupported portfolio return is shown as unavailable. The web Cash Flow composition adapts the inspected native source because the inspected Copilot web FAQ said it was not yet available on web. The gtfol visual treatment intentionally replaces Copilot's card surfaces and decorative styling while retaining useful row, inspector, budget, and chart relationships.
-
-## Dashboard transaction review
-
-The October 25 Copilot desktop demo inspection confirmed that dashboard rows open a transaction inspector in place, left checkboxes select a batch, the batch action follows the selection, and View all opens the full review list. Asset applies that workflow on web and iPhone with gtfol typography and neutral controls. The dashboard shows six dated items, supports reviewing selected or shown records, and offers Undo for the last batch. Editing a row can save and review it without leaving the dashboard; the review flag is written after the edits succeed. Web also offers Save only. Account and category labels remain readable at phone width. Existing imported review flags are unchanged.
+Asset uses the provided references for daily review, progressive details, and readable financial hierarchy. It has its own palette, original logo, line icons, typography, and layout. It does not claim Copilot's proprietary classifier, recurring forecast engine, or transaction audit. Existing calculations and record-level sync remain unchanged.

@@ -7,6 +7,7 @@ import {
   type State,
   type Transaction,
 } from './schema.js';
+import { applyRules } from './core.js';
 import { importedMatch, preserveImportedDetails } from './account-links.js';
 
 export const appleAccountInput = z.object({
@@ -130,23 +131,26 @@ export function applyAppleBatch(
       (x) =>
         x.accountId === account.id && x.source === 'financekit' && x.providerId === t.providerId,
     );
-    const provider = transactionSchema.parse({
-      id: `apple-${account.id}-${t.providerId}`,
-      accountId: account.id,
-      name: t.name,
-      date: t.date,
-      amount: t.amount,
-      currency: t.currency,
-      kind: t.type,
-      categoryId: 'other',
-      pending: t.pending,
-      source: 'financekit',
-      removed: false,
-      importedAt: previous?.importedAt ?? now,
-      providerId: t.providerId,
-      connectionId: account.connectionId,
-      raw: { authorized_date: t.authorizedDate, direction: t.direction },
-    });
+    const provider = applyRules(
+      transactionSchema.parse({
+        id: `apple-${account.id}-${t.providerId}`,
+        accountId: account.id,
+        name: t.name,
+        date: t.date,
+        amount: t.amount,
+        currency: t.currency,
+        kind: t.type,
+        categoryId: 'other',
+        pending: t.pending,
+        source: 'financekit',
+        removed: false,
+        importedAt: previous?.importedAt ?? now,
+        providerId: t.providerId,
+        connectionId: account.connectionId,
+        raw: { authorized_date: t.authorizedDate, direction: t.direction },
+      }),
+      state,
+    );
     const imported =
       previous || provider.pending ? undefined : importedMatch(state.transactions, provider);
     if (previous)

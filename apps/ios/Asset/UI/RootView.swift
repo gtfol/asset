@@ -24,7 +24,7 @@ struct RootView: View {
         NavigationStack {
           VStack(spacing: 0) {
             ScrollView(.horizontal, showsIndicators: false) {
-              HStack(spacing: 24) {
+              HStack(spacing: 8) {
                 ForEach(pages, id: \.self) { title in
                   Button {
                     page = title
@@ -35,14 +35,17 @@ struct RootView: View {
                           page == title ? "Lato-Medium" : "Lato-Regular", size: 15,
                           relativeTo: .subheadline)
                       )
-                      .foregroundStyle(page == title ? Color.assetText : Color.assetSecondary)
+                      .foregroundStyle(page == title ? Color.assetBlue : Color.assetSecondary)
+                      .padding(.horizontal, 14)
+                      .padding(.vertical, 9)
+                      .background(page == title ? Color.assetBlueWash : Color.clear, in: Capsule())
                       .frame(minHeight: 44)
                       .contentShape(Rectangle())
                   }.buttonStyle(.plain)
                     .accessibilityAddTraits(page == title ? .isSelected : [])
                 }
               }.padding(.horizontal, 20).padding(.bottom, 8)
-            }.background(Color(uiColor: .systemBackground))
+            }.background(Color.assetBackground)
             Group {
               switch page {
               case "Transactions": TransactionsView()
@@ -63,7 +66,7 @@ struct RootView: View {
                   settings = true
                 } label: {
                   Image(systemName: "gearshape")
-                }.accessibilityLabel("Settings and connections").tint(.assetText)
+                }.accessibilityLabel("Settings and connections").tint(.assetBlue)
               }.quietBackground()
               ToolbarItem(placement: .topBarTrailing) {
                 Button {
@@ -73,7 +76,7 @@ struct RootView: View {
                     systemName: store.row.object("notifications").rows("items").contains(where: {
                       !$0.flag("read")
                     }) ? "bell.badge" : "bell")
-                }.accessibilityLabel("Notifications").tint(.assetText)
+                }.accessibilityLabel("Notifications").tint(.assetBlue)
               }.quietBackground()
               ToolbarItem(placement: .topBarTrailing) {
                 Menu {
@@ -85,7 +88,7 @@ struct RootView: View {
                   Button("Add category") { addAction = .category }
                 } label: {
                   Image(systemName: "plus")
-                }.accessibilityLabel("Add").tint(.assetText)
+                }.accessibilityLabel("Add").tint(.assetBlue)
               }.quietBackground()
             }
             .sheet(isPresented: $settings) { SettingsView() }
@@ -127,6 +130,7 @@ struct DashboardView: View {
   @Binding var month: String
   @State private var addAccount = false
   @State private var addBitcoin = false
+  @State private var showEstimate = false
   var body: some View {
     let d = store.calculation("dashboard", [month])
     let w = store.calculation("netWorth")
@@ -137,8 +141,10 @@ struct DashboardView: View {
             Menu {
               Button("Manual account") { addAccount = true }
               Button("Bitcoin wallet") { addBitcoin = true }
-            } label: { Text("Add an account") }
-              .buttonStyle(AssetBorderButtonStyle())
+            } label: {
+              Text("Add an account")
+            }
+            .buttonStyle(AssetBorderButtonStyle())
             NavigationLink("Import transactions") { ImportView() }
               .frame(minHeight: 44)
           }.font(.custom("Lato-Regular", size: 15, relativeTo: .subheadline))
@@ -146,177 +152,212 @@ struct DashboardView: View {
             .sheet(isPresented: $addAccount) { AccountForm() }
             .sheet(isPresented: $addBitcoin) { BitcoinWalletSetupView() }
         } else {
-        MonthPicker(month: $month)
-        Card(title: "Spending this month") {
-          HStack(alignment: .top) {
-            Metric(title: "Spent", value: money(d.data["spending"], store.currency))
-            Spacer()
-            Metric(
-              title: "Left to spend", value: money(d.data["left"], store.currency),
-              color: d.number("left") < 0 ? .assetAmber : .assetText)
-          }
-          Text(
-            d.missing("budget")
-              ? "No monthly budget set" : "\(money(d.data["budget"], store.currency)) budgeted"
-          )
-          .font(.custom("Lato-Regular", size: 13, relativeTo: .caption)).foregroundStyle(
-            Color.assetSecondary)
-          HistoryChart(
-            points: d.rows("points").filter { !$0.missing("actual") }.map {
-              PlotPoint(
-                id: $0.integer("day"), label: $0.text("date"), value: $0.number("actual"),
-                ideal: $0.missing("ideal") ? nil : $0.number("ideal"))
-            }, currency: store.currency,
-            color: .assetBlue,
-            forecast: d.missing("projection") ? nil : d.number("projection"),
-            finalDay: d.integer("days"), budget: d.missing("budget") ? nil : d.number("budget"))
-          Text(
-            d.missing("projection")
-              ? "Solid: actual · Dotted: ideal budget pace"
-              : "Solid: actual · Dotted: ideal pace · Dashed: estimate"
-          )
-          .font(.custom("Lato-Regular", size: 12, relativeTo: .caption2)).foregroundStyle(
-            Color.assetSecondary)
-          if !d.missing("paceDifference") {
-            Text(
-              "\(money(abs(d.number("paceDifference")),store.currency)) \(d.number("paceDifference")<0 ? "above" : "below") budget pace"
-            ).font(.custom("Lato-Regular", size: 13, relativeTo: .caption)).foregroundStyle(
-              d.number("paceDifference") < 0 ? Color.assetAmber : Color.assetSecondary)
-          }
-          if !d.flag("historical") {
-            HStack {
-              Text("Month-end projection").font(
-                .custom("Lato-Regular", size: 13, relativeTo: .caption))
+          MonthPicker(month: $month)
+          Card(title: "Spending this month", spacing: 12) {
+            HStack(alignment: .top) {
+              Metric(title: "Spent", value: money(d.data["spending"], store.currency))
               Spacer()
-              Text(money(d.data["projection"], store.currency)).font(
-                .custom("Lato-Medium", size: 15, relativeTo: .subheadline)
-              ).monospacedDigit()
+              Metric(
+                title: "Left to spend", value: money(d.data["left"], store.currency),
+                color: d.number("left") < 0 ? .assetAmber : .assetText)
+            }
+            Text(
+              d.missing("budget")
+                ? "No monthly budget set" : "\(money(d.data["budget"], store.currency)) budgeted"
+            )
+            .font(.custom("Lato-Regular", size: 12, relativeTo: .caption2)).foregroundStyle(
+              Color.assetSecondary)
+            HistoryChart(
+              points: d.rows("points").filter { !$0.missing("actual") }.map {
+                PlotPoint(
+                  id: $0.integer("day"), label: $0.text("date"), value: $0.number("actual"),
+                  ideal: $0.missing("ideal") ? nil : $0.number("ideal"))
+              }, currency: store.currency, color: .assetBlue,
+              forecast: d.missing("projection") ? nil : d.number("projection"),
+              finalDay: d.integer("days"), budget: d.missing("budget") ? nil : d.number("budget"),
+              height: 115, showsLatestValue: false)
+            HStack {
+              Text(
+                d.missing("projection") ? "Actual · Budget pace" : "Actual · Budget pace · Estimate"
+              )
+              .font(.custom("Lato-Regular", size: 11, relativeTo: .caption2)).foregroundStyle(
+                Color.assetSecondary)
+              Spacer()
+              Button {
+                showEstimate = true
+              } label: {
+                Image(systemName: "info.circle")
+              }
+              .foregroundStyle(Color.assetBlue).frame(width: 44, height: 44)
+              .accessibilityLabel("About spending calculations")
+            }
+            if !d.missing("paceDifference") || !d.missing("projection") {
+              HStack(alignment: .top) {
+                if !d.missing("paceDifference") {
+                  Text(
+                    "\(money(abs(d.number("paceDifference")),store.currency)) \(d.number("paceDifference") < 0 ? "over" : "under") pace"
+                  )
+                  .foregroundStyle(
+                    d.number("paceDifference") < 0 ? Color.assetAmber : Color.assetGreen)
+                }
+                Spacer(minLength: 8)
+                if !d.missing("projection") {
+                  Text("Est. \(money(d.data["projection"], store.currency))").monospacedDigit()
+                    .foregroundStyle(Color.assetSecondary)
+                }
+              }.font(.custom("Lato-Regular", size: 12, relativeTo: .caption2))
             }
           }
-          if !d.flag("historical") && d.flag("complete") {
-            DisclosureGroup("About this estimate") {
-              Text(
-                "Actual spending × days in month ÷ days elapsed. Early-month or uneven spending can distort the estimate. Expected future bills are not deducted."
-              )
-              .font(.custom("Lato-Regular", size: 13, relativeTo: .caption))
-              .foregroundStyle(Color.assetSecondary)
-            }.font(.custom("Lato-Regular", size: 13, relativeTo: .caption))
-          } else if !d.flag("historical") {
-            Text("Projection unavailable until this month’s history is complete.")
-              .font(.custom("Lato-Regular", size: 13, relativeTo: .caption))
-              .foregroundStyle(Color.assetSecondary)
+          DashboardReviewQueue().id(store.workspaceGeneration)
+          Card(title: "Net worth") {
+            Metric(title: "Assets minus debt", value: money(w.data["total"], store.currency))
+            HistoryChart(
+              points: historyPoints(w.rows("history").filter { $0.flag("complete") }),
+              currency: store.currency)
+            HStack {
+              Metric(title: "Assets", value: money(w.data["assets"], store.currency))
+              Spacer()
+              Metric(title: "Debt", value: money(w.data["debt"], store.currency))
+            }
           }
-        }
-        DashboardReviewQueue().id(store.workspaceGeneration)
-        Card(title: "Net worth") {
-          Metric(title: "Assets minus debt", value: money(w.data["total"], store.currency))
-          HistoryChart(
-            points: historyPoints(w.rows("history").filter { $0.flag("complete") }),
-            currency: store.currency)
-          HStack {
-            Metric(title: "Assets", value: money(w.data["assets"], store.currency))
-            Spacer()
-            Metric(title: "Debt", value: money(w.data["debt"], store.currency))
+          Card(title: "Category budgets") {
+            ForEach(Array(d.rows("categories").prefix(6))) { c in
+              NavigationLink {
+                CategoryDetail(categoryID: c.id, month: month)
+              } label: {
+                CategoryBudgetLine(category: c)
+              }.buttonStyle(.plain)
+            }
           }
-        }
-        Card(title: "Category budgets") {
-          ForEach(Array(d.rows("categories").prefix(6))) { c in
-            NavigationLink {
-              CategoryDetail(categoryID: c.id, month: month)
-            } label: {
-              CategoryBudgetLine(category: c)
-            }.buttonStyle(.plain)
+          Card(title: "Net this month") {
+            let n = d.object("netThisMonth")
+            Metric(
+              title: "Income − actual spending", value: money(n.data["net"], store.currency),
+              color: n.number("net") >= 0 ? .assetText : .assetAmber)
+            Text(
+              "Transfers, card payments, and pending transactions are excluded. Budget-excluded spending follows the Cash Flow setting."
+            ).font(.custom("Lato-Regular", size: 13, relativeTo: .caption)).foregroundStyle(
+              Color.assetSecondary)
+            NavigationLink("View cash flow") { CashFlowView(month: $month) }
           }
-        }
-        Card(title: "Net this month") {
-          let n = d.object("netThisMonth")
-          Metric(
-            title: "Income − actual spending", value: money(n.data["net"], store.currency),
-            color: n.number("net") >= 0 ? .assetText : .assetAmber)
-          Text(
-            "Transfers, card payments, and pending transactions are excluded. Budget-excluded spending follows the Cash Flow setting."
-          ).font(.custom("Lato-Regular", size: 13, relativeTo: .caption)).foregroundStyle(
-            Color.assetSecondary)
-          NavigationLink("View cash flow") { CashFlowView(month: $month) }
-        }
         }
       }.padding(20)
     }.refreshable { await store.refresh() }
+      .alert("Spending calculations", isPresented: $showEstimate) {
+        Button("Done", role: .cancel) {}
+      } message: {
+        Text(
+          "Solid: actual spending. Dotted: ideal budget pace. Dashed: month-end estimate, calculated as actual spending × days in month ÷ days elapsed. Estimates require complete history, can change with uneven spending, and do not deduct future bills."
+        )
+      }
   }
 }
 
 struct DashboardReviewQueue: View {
   @EnvironmentObject var store: Store
-  @State private var selected = Set<String>()
   @State private var undoIDs: [String] = []
   @State private var working = false
   @State private var editing: Row?
   private var review: [Row] { store.transactions.filter { !$0.flag("reviewed") } }
-  private var visible: [Row] { Array(review.prefix(6)) }
-  private var chosen: [String] { visible.filter { selected.contains($0.id) }.map(\.id) }
+  private var day: [Row] { review.filter { $0.text("date") == review.first?.text("date") } }
+  private var visible: [Row] { Array(day.prefix(6)) }
+  private var dayLabel: String {
+    guard let date = day.first?.text("date") else { return "" }
+    let formatter = DateFormatter()
+    formatter.dateFormat = "yyyy-MM-dd"
+    formatter.timeZone = TimeZone(identifier: store.row.object("settings").text("timezone"))
+    guard let value = formatter.date(from: date) else { return date }
+    var calendar = Calendar.current
+    calendar.timeZone = formatter.timeZone
+    if calendar.isDateInToday(value) { return "So far today" }
+    if calendar.isDateInYesterday(value) { return "Yesterday" }
+    formatter.dateFormat = "EEEE, MMM d"
+    return formatter.string(from: value)
+  }
   var body: some View {
-    Card {
+    VStack(spacing: 12) {
       HStack {
-        Text("To review · \(review.count)")
-          .font(.custom("Lato-Regular", size: 17, relativeTo: .headline))
-          .foregroundStyle(Color.assetSecondary)
+        Text("To review").font(.custom("Lato-Medium", size: 13, relativeTo: .caption))
+        Text("\(review.count)").font(.custom("Lato-Regular", size: 12, relativeTo: .caption2))
         Spacer()
-        NavigationLink("View all") { TransactionsView(initialReview: true) }
-          .frame(minHeight: 44)
-      }
-      if visible.isEmpty {
-        Text("All caught up.").foregroundStyle(Color.assetSecondary).padding(.vertical, 12)
-      }
-      ForEach(Array(visible.enumerated()), id: \.element.id) { index, transaction in
-        if index == 0 || visible[index - 1].text("date") != transaction.text("date") {
-          Text(transaction.text("date"))
-            .font(.custom("Lato-Regular", size: 13, relativeTo: .caption))
-            .foregroundStyle(Color.assetSecondary).padding(.top, 8)
-        }
-        HStack(spacing: 4) {
+        NavigationLink {
+          TransactionsView(initialReview: true)
+        } label: {
+          HStack(spacing: 4) {
+            Text("View all")
+            Image(systemName: "chevron.right").font(.system(size: 10))
+          }
+        }.font(.custom("Lato-Regular", size: 13, relativeTo: .caption)).frame(minHeight: 44)
+      }.foregroundStyle(Color.assetSecondary).padding(.horizontal, 4)
+      Card {
+        if visible.isEmpty {
+          HStack(spacing: 14) {
+            Image(systemName: "checkmark.circle").font(.system(size: 24)).foregroundStyle(
+              Color.assetGreen)
+            VStack(alignment: .leading, spacing: 5) {
+              Text("All caught up").font(.custom("Lato-Medium", size: 15, relativeTo: .subheadline))
+              Text("Your next transactions will appear here.").font(
+                .custom("Lato-Regular", size: 13, relativeTo: .caption)
+              ).foregroundStyle(Color.assetSecondary)
+            }
+          }.padding(.vertical, 8)
+        } else {
+          Text(dayLabel + (day.count > 6 ? " · \(visible.count) of \(day.count)" : ""))
+            .font(.custom("Lato-Regular", size: 13, relativeTo: .caption)).foregroundStyle(
+              Color.assetSecondary
+            )
+            .frame(maxWidth: .infinity)
+          VStack(spacing: 2) {
+            ForEach(visible) { transaction in
+              Button {
+                editing = transaction
+              } label: {
+                HStack(spacing: 10) {
+                  VStack(alignment: .leading, spacing: 5) {
+                    Text(transaction.text("name")).lineLimit(1).foregroundStyle(Color.assetText)
+                    HStack(spacing: 5) {
+                      CategoryBadge(
+                        category: store.categories.first(where: {
+                          $0.id == transaction.text("categoryId")
+                        }) ?? Row(["id": "other", "name": "Other"]))
+                      if transaction.flag("pending") {
+                        Text("Pending").font(
+                          .custom("Lato-Regular", size: 11, relativeTo: .caption2)
+                        ).foregroundStyle(Color.assetSecondary)
+                      }
+                    }
+                  }
+                  Spacer(minLength: 0)
+                  Text(money(transaction.data["amount"], transaction.text("currency")))
+                    .font(.custom("Lato-Medium", size: 14, relativeTo: .subheadline))
+                    .monospacedDigit()
+                    .foregroundStyle(
+                      ["income", "refund"].contains(transaction.text("kind"))
+                        ? Color.assetGreen : Color.assetText)
+                  Circle().fill(Color.assetBlue).frame(width: 5, height: 5)
+                }.frame(minHeight: 52).contentShape(Rectangle())
+              }.buttonStyle(.plain).accessibilityIdentifier("review-open-\(transaction.id)")
+            }
+          }
           Button {
-            if selected.contains(transaction.id) { selected.remove(transaction.id) }
-            else { selected.insert(transaction.id) }
+            commit(visible.map(\.id), reviewed: true)
           } label: {
-            Image(systemName: selected.contains(transaction.id) ? "checkmark.square" : "square")
-              .frame(width: 44, height: 44)
-          }.accessibilityLabel("Select \(transaction.text("name")) for review")
-            .accessibilityIdentifier("review-select-\(transaction.id)")
-            .accessibilityValue(selected.contains(transaction.id) ? "Selected" : "Not selected")
-            .disabled(working)
-          Button { editing = transaction } label: { TransactionLine(tx: transaction, showCategory: true) }
-            .frame(minHeight: 44).buttonStyle(.plain)
-            .accessibilityIdentifier("review-open-\(transaction.id)")
+            Label(working ? "Saving…" : "Mark as reviewed", systemImage: "checkmark").frame(
+              maxWidth: .infinity)
+          }.buttonStyle(AssetPrimaryButtonStyle(soft: true)).disabled(working || store.busy)
         }
-        Divider()
-      }
-      if !visible.isEmpty {
-        ViewThatFits(in: .horizontal) {
-          HStack { reviewCount; Spacer(); reviewButton }
-          VStack(alignment: .leading, spacing: 8) { reviewCount; reviewButton }
-        }
-        if !chosen.isEmpty { Button("Clear selection") { selected = [] }.frame(minHeight: 44) }
       }
       if !undoIDs.isEmpty {
-        HStack {
+        HStack(spacing: 12) {
           Text("\(undoIDs.count) reviewed").foregroundStyle(Color.assetSecondary)
           Button("Undo") {
             let current = Set(store.transactions.filter { $0.flag("reviewed") }.map(\.id))
             commit(undoIDs.filter { current.contains($0) }, reviewed: false)
-          }.disabled(working).frame(minHeight: 44)
+          }.disabled(working).frame(minHeight: 44).foregroundStyle(Color.assetBlue)
         }.font(.custom("Lato-Regular", size: 13, relativeTo: .caption))
       }
-    }.font(.custom("Lato-Regular", size: 15, relativeTo: .subheadline)).buttonStyle(.plain)
-      .sheet(item: $editing) { TransactionForm(transaction: $0, reviewMode: true) }
-  }
-  private var reviewCount: some View {
-    Text(chosen.isEmpty ? "\(visible.count) of \(review.count)" : "\(chosen.count) selected")
-      .font(.custom("Lato-Regular", size: 13, relativeTo: .caption)).foregroundStyle(Color.assetSecondary)
-  }
-  private var reviewButton: some View {
-    Button(working ? "Saving…" : "Review \(chosen.isEmpty ? visible.count : chosen.count) \(chosen.isEmpty ? "shown" : "selected")") {
-      commit(chosen.isEmpty ? visible.map(\.id) : chosen, reviewed: true)
-    }.buttonStyle(AssetBorderButtonStyle()).disabled(working || store.busy)
+    }.font(.custom("Lato-Regular", size: 14, relativeTo: .subheadline))
+      .sheet(item: $editing) { TransactionDetailSheet(transaction: $0) }
   }
   private func commit(_ ids: [String], reviewed: Bool) {
     guard !working, !ids.isEmpty else { return }
@@ -327,8 +368,10 @@ struct DashboardReviewQueue: View {
       do {
         try await store.command("transactions.review", ["ids": ids, "reviewed": reviewed])
         guard generation == store.workspaceGeneration else { return }
-        selected = []; undoIDs = reviewed ? ids : []
-      } catch { if generation == store.workspaceGeneration { store.error = error.localizedDescription } }
+        undoIDs = reviewed ? ids : []
+      } catch {
+        if generation == store.workspaceGeneration { store.error = error.localizedDescription }
+      }
     }
   }
 }

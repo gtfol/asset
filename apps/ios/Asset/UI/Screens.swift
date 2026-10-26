@@ -19,6 +19,7 @@ struct TransactionsView: View {
   @State var selected = Set<String>()
   @State var selecting = false
   @State private var reviewing = false
+  @State private var detail: Row?
   @State private var page = TransactionListPage()
   @State private var initialized = false
   @State private var appliedFilters: TransactionFilters?
@@ -34,12 +35,16 @@ struct TransactionsView: View {
       VStack(alignment: .leading, spacing: 8) {
         HStack(spacing: 8) {
           Image(systemName: "magnifyingglass").foregroundStyle(Color.assetSecondary)
-          TextField("Search transactions", text: $query,
-            prompt: Text("Search merchants and notes").foregroundStyle(Color.assetSecondary))
-            .textInputAutocapitalization(.never).autocorrectionDisabled()
-            .accessibilityLabel("Search transactions")
+          TextField(
+            "Search transactions", text: $query,
+            prompt: Text("Search merchants and notes").foregroundStyle(Color.assetSecondary)
+          )
+          .textInputAutocapitalization(.never).autocorrectionDisabled()
+          .accessibilityLabel("Search transactions")
           if !query.isEmpty {
-            Button { query = "" } label: {
+            Button {
+              query = ""
+            } label: {
               Image(systemName: "xmark").frame(width: 44, height: 44)
             }.accessibilityLabel("Clear search")
           }
@@ -86,7 +91,11 @@ struct TransactionsView: View {
             ForEach(group.rows) { t in
               if selecting {
                 Button {
-                  if selected.contains(t.id) { selected.remove(t.id) } else { selected.insert(t.id) }
+                  if selected.contains(t.id) {
+                    selected.remove(t.id)
+                  } else {
+                    selected.insert(t.id)
+                  }
                 } label: {
                   HStack {
                     Image(systemName: selected.contains(t.id) ? "checkmark.circle.fill" : "circle")
@@ -94,14 +103,14 @@ struct TransactionsView: View {
                   }
                 }.buttonStyle(.plain)
               } else {
-                NavigationLink {
-                  TransactionForm(transaction: t)
+                Button {
+                  detail = t
                 } label: {
-                  TransactionLine(tx: t)
-                }.swipeActions {
+                  TransactionLine(tx: t, showCategory: true)
+                }.buttonStyle(.plain).swipeActions {
                   Button("Review", systemImage: "checkmark") {
                     store.perform("transactions.review", ["ids": [t.id], "reviewed": true])
-                  }.tint(.assetText)
+                  }.tint(.assetBlue)
                 }
               }
             }
@@ -135,9 +144,10 @@ struct TransactionsView: View {
             title: store.transactions.isEmpty ? "No transactions yet" : "No matching transactions",
             message: store.transactions.isEmpty
               ? "Add a transaction with +, or import a CSV from Settings."
-              : "Try a different search or filter.")
-            .listRowSeparator(.hidden)
-            .listRowInsets(EdgeInsets(top: 8, leading: 20, bottom: 8, trailing: 20))
+              : "Try a different search or filter."
+          )
+          .listRowSeparator(.hidden)
+          .listRowInsets(EdgeInsets(top: 8, leading: 20, bottom: 8, trailing: 20))
         }
       }.listStyle(.plain).scrollContentBackground(.hidden)
         .font(.custom("Lato-Regular", size: 15, relativeTo: .subheadline))
@@ -158,6 +168,7 @@ struct TransactionsView: View {
       }
       .onChange(of: filters) { _, _ in refreshSnapshot() }
       .onChange(of: store.stateGeneration) { _, _ in refreshSnapshot() }
+      .sheet(item: $detail) { TransactionDetailSheet(transaction: $0) }
       .sheet(isPresented: $showFilters) {
         NavigationStack {
           List {
@@ -346,9 +357,12 @@ struct AccountsView: View {
     ScrollView {
       VStack(spacing: 16) {
         if store.accounts.isEmpty {
-          AssetEmptyState(title: "No accounts yet", message: "Use + to add an account or Bitcoin wallet.")
+          AssetEmptyState(
+            title: "No accounts yet", message: "Use + to add an account or Bitcoin wallet.")
         } else {
-          if !store.bitcoinError.isEmpty { Text(store.bitcoinError).foregroundStyle(Color.assetError) }
+          if !store.bitcoinError.isEmpty {
+            Text(store.bitcoinError).foregroundStyle(Color.assetError)
+          }
           Card(title: "Net worth") {
             Metric(
               title: "\(store.currency) · assets minus debt",
@@ -425,13 +439,28 @@ struct AccountDetail: View {
           if !a.missing("loan") {
             let loan = a.object("loan")
             let lender = loan.text("lender")
-            Text(lender == "santander" ? "Santander Consumer USA" : lender == "synchrony" ? "Synchrony Pay Later" : "Loan details")
-            if !loan.missing("ratePercent") { Text("\(loan.number("ratePercent").formatted())% \(loan.text("rateType", "APR"))") }
+            Text(
+              lender == "santander"
+                ? "Santander Consumer USA"
+                : lender == "synchrony" ? "Synchrony Pay Later" : "Loan details")
+            if !loan.missing("ratePercent") {
+              Text("\(loan.number("ratePercent").formatted())% \(loan.text("rateType", "APR"))")
+            }
             Text("Scheduled payment: \(money(loan.data["paymentAmount"], a.text("currency")))")
             Text("Next payment: \(loan.text("nextPaymentDate", "Not entered"))")
-            if lender == "santander" { Link("Open lender account", destination: URL(string: "https://myaccount.santanderconsumerusa.com/")!) }
-            if lender == "synchrony" { Link("Open lender account", destination: URL(string: "https://www.synchrony.com/quickaccess/signin/paylater")!) }
-            Text("Updated from your statements. Balance changes are recorded separately from bank payments.").font(.footnote).foregroundStyle(Color.assetSecondary)
+            if lender == "santander" {
+              Link(
+                "Open lender account",
+                destination: URL(string: "https://myaccount.santanderconsumerusa.com/")!)
+            }
+            if lender == "synchrony" {
+              Link(
+                "Open lender account",
+                destination: URL(string: "https://www.synchrony.com/quickaccess/signin/paylater")!)
+            }
+            Text(
+              "Updated from your statements. Balance changes are recorded separately from bank payments."
+            ).font(.footnote).foregroundStyle(Color.assetSecondary)
           }
           HistoryChart(
             points: historyPoints(
@@ -453,14 +482,15 @@ struct AccountDetail: View {
         }
         if a.text("source") == "bitcoin" { BitcoinAccountDetail(account: a) }
         if a.text("source") != "bitcoin" {
-        Card(title: "History coverage") {
-          Text(a.text("coverageStart", "Unknown") + " to " + a.text("coverageEnd", "unknown"))
-          StatusLabel(
-            text: a.flag("coverageComplete") ? "Complete for recorded range" : "Incomplete history")
-          Text("Balance history contains recorded snapshots only.").font(
-            .custom("Lato-Regular", size: 13, relativeTo: .caption)
-          ).foregroundStyle(Color.assetSecondary)
-        }
+          Card(title: "History coverage") {
+            Text(a.text("coverageStart", "Unknown") + " to " + a.text("coverageEnd", "unknown"))
+            StatusLabel(
+              text: a.flag("coverageComplete")
+                ? "Complete for recorded range" : "Incomplete history")
+            Text("Balance history contains recorded snapshots only.").font(
+              .custom("Lato-Regular", size: 13, relativeTo: .caption)
+            ).foregroundStyle(Color.assetSecondary)
+          }
         }
         NavigationLink("Related transactions") { TransactionsView(initialAccount: accountID) }
           .frame(minHeight: 44)
@@ -480,8 +510,11 @@ struct BitcoinAccountDetail: View {
     let market = store.row.object("bitcoinMarket")
     Card(title: "Bitcoin address") {
       Text(wallet.text("address")).textSelection(.enabled).font(.caption)
-      LabeledContent("Confirmed BTC", value: String(format: "%.8f", wallet.number("satoshis") / 100000000))
-      LabeledContent("Pending BTC", value: String(format: "%.8f", wallet.number("pendingSatoshis") / 100000000))
+      LabeledContent(
+        "Confirmed BTC", value: String(format: "%.8f", wallet.number("satoshis") / 100_000_000))
+      LabeledContent(
+        "Pending BTC", value: String(format: "%.8f", wallet.number("pendingSatoshis") / 100_000_000)
+      )
       LabeledContent("BTC / USD", value: money(market.data["price"], "USD"))
       let quoteDate: Date = {
         let formatter = ISO8601DateFormatter()
@@ -489,10 +522,13 @@ struct BitcoinAccountDetail: View {
         return formatter.date(from: market.text("updatedAt")) ?? .distantPast
       }()
       if Date().timeIntervalSince(quoteDate) > 900 {
-        Text("Saved price is out of date. Refresh to update the valuation.").font(.caption).foregroundStyle(Color.assetError)
+        Text("Saved price is out of date. Refresh to update the valuation.").font(.caption)
+          .foregroundStyle(Color.assetError)
       }
-      Text("Balance checked \(wallet.text("syncedAt")). Pending transfers are excluded from net worth.")
-        .font(.caption).foregroundStyle(Color.assetSecondary)
+      Text(
+        "Balance checked \(wallet.text("syncedAt")). Pending transfers are excluded from net worth."
+      )
+      .font(.caption).foregroundStyle(Color.assetSecondary)
       Button(busy ? "Refreshing…" : "Refresh Bitcoin") {
         busy = true
         Task {
@@ -506,14 +542,21 @@ struct BitcoinAccountDetail: View {
       }.disabled(busy || store.mode != "remote").frame(minHeight: 44)
       if !error.isEmpty { Text(error).foregroundStyle(Color.assetError) }
       Text("Bitcoin price history").font(.custom("Lato-Medium", size: 15, relativeTo: .subheadline))
-      HistoryChart(points: historyPoints(market.rows("history"), key: "price", range: range), currency: "USD")
+      HistoryChart(
+        points: historyPoints(market.rows("history"), key: "price", range: range), currency: "USD")
       RangePicker(range: $range)
-      Text("Coinbase daily closes in UTC, including available history back to 2015. Quote: \(market.text("updatedAt")). Quotes refresh every minute while Asset is open; balances every five minutes.")
-        .font(.caption).foregroundStyle(Color.assetSecondary)
-      Text("Wallet history uses the confirmed BTC held on each date. \(wallet.flag("historyComplete") ? "Loaded" : "Partial") history starts \(wallet.text("historyStart")). Missing prices are omitted. A transfer does not establish your purchase cost.")
-        .font(.caption).foregroundStyle(Color.assetSecondary)
-      Button("Stop tracking and keep saved balances") { store.perform("bitcoin.disconnect", ["id": account.id]) }
-        .frame(minHeight: 44)
+      Text(
+        "Coinbase daily closes in UTC, including available history back to 2015. Quote: \(market.text("updatedAt")). Quotes refresh every minute while Asset is open; balances every five minutes."
+      )
+      .font(.caption).foregroundStyle(Color.assetSecondary)
+      Text(
+        "Wallet history uses the confirmed BTC held on each date. \(wallet.flag("historyComplete") ? "Loaded" : "Partial") history starts \(wallet.text("historyStart")). Missing prices are omitted. A transfer does not establish your purchase cost."
+      )
+      .font(.caption).foregroundStyle(Color.assetSecondary)
+      Button("Stop tracking and keep saved balances") {
+        store.perform("bitcoin.disconnect", ["id": account.id])
+      }
+      .frame(minHeight: 44)
     }
   }
 }
@@ -618,11 +661,17 @@ struct HoldingDetail: View {
         LabeledContent("Market value", value: money(h.data["marketValue"], h.text("currency")))
         LabeledContent("Cost basis", value: money(h.data["costBasis"], h.text("currency")))
         LabeledContent("Unrealized gain", value: money(h.data["gain"], h.text("currency")))
-        Text(h.text("source") == "bitcoin" ? "Bitcoin quotes refresh every minute while Asset is open. Address details and historical prices are in Accounts." : "Position gain is not your cash-flow-adjusted portfolio return. Prices are not live.")
-          .font(.custom("Lato-Regular", size: 13, relativeTo: .caption)).foregroundStyle(
-            Color.assetSecondary)
+        Text(
+          h.text("source") == "bitcoin"
+            ? "Bitcoin quotes refresh every minute while Asset is open. Address details and historical prices are in Accounts."
+            : "Position gain is not your cash-flow-adjusted portfolio return. Prices are not live."
+        )
+        .font(.custom("Lato-Regular", size: 13, relativeTo: .caption)).foregroundStyle(
+          Color.assetSecondary)
       }
-      if !["plaid", "bitcoin"].contains(h.text("source")) { Button("Edit holding") { edit = true } }
+      if !["plaid", "bitcoin"].contains(h.text("source")) {
+        Button("Edit holding") { edit = true }
+      }
     }.assetTitle(h.text("symbol")).sheet(isPresented: $edit) { HoldingForm(holding: h) }
   }
 }

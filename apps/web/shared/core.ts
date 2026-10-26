@@ -367,29 +367,87 @@ export function investmentOverview(s: State, accountId = 'all', asOf = today(s.s
       'Cash-flow-adjusted return needs complete dated valuations and external contribution history. Balance growth is not investment return.',
   };
 }
-export function applyRules(t: Transaction, s: State): Transaction {
-  if (t.edits.categoryId) return t;
-  const norm = t.name.trim().toLowerCase();
-  const r = s.rules.find(
+// Merchant suggestions stay on-device/server; no transaction data is sent to an AI service.
+export function categorySuggestion(
+  s: State,
+  transaction: Transaction,
+): { categoryId: string; reason: string } | null {
+  const t = effective(transaction);
+  if (transaction.edits.categoryId || t.splits.length) return null;
+  const name = t.name.trim().toLowerCase();
+  const rule = s.rules.find(
     (r) =>
       (!r.accountId || r.accountId === t.accountId) &&
       (r.match === 'exact'
-        ? norm === r.merchant.toLowerCase()
-        : norm.includes(r.merchant.toLowerCase())),
+        ? name === r.merchant.trim().toLowerCase()
+        : name.includes(r.merchant.trim().toLowerCase())) &&
+      s.categories.some((c) => c.id === r.categoryId && !c.archived),
   );
-  if (r)
-    return { ...t, categoryId: r.categoryId, ...(r.name && !t.edits.name ? { name: r.name } : {}) };
-  if (t.categoryId !== 'other' || !isSpending(t.kind)) return t;
-  const mappings: [RegExp, string][] = [
-    [/coffee|café|cafe|starbucks/, 'coffee'],
-    [/whole foods|trader joe|grocery|greenmarket/, 'groceries'],
-    [/restaurant|noodle|pizza/, 'restaurants'],
-    [/transit|uber|lyft/, 'transport'],
+  if (rule) return { categoryId: rule.categoryId, reason: 'Your merchant rule' };
+  // Preserve provider and imported categories. Suggestions only fill uncategorized spending.
+  if (t.categoryId !== 'other' || !isSpending(t.kind)) return null;
+  const merchants: [RegExp, string, string[]][] = [
+    [
+      /\b(uber eats|doordash|grubhub|chipotle|sweetgreen|panera|restaurant|noodle|pizza)\b/,
+      'restaurants',
+      ['restaurants', 'dining', 'dining out'],
+    ],
+    [/\b(starbucks|coffee|café|cafe|peet'?s)\b/, 'coffee', ['coffee', 'coffee shops']],
+    [
+      /\b(whole foods|trader joe|safeway|kroger|aldi|grocery|groceries|greenmarket)\b/,
+      'groceries',
+      ['groceries'],
+    ],
+    [
+      /\b(tesla supercharger|tesla charging|shell car wash|parksmart|transit|uber|lyft)\b/,
+      'transport',
+      ['transportation', 'transport', 'auto & transport'],
+    ],
+    [/\b(depop|poshmark|nordstrom|uniqlo|etsy)\b/, 'shopping', ['shops', 'shopping']],
+    [
+      /\b(amc|cinemark|eventbrite|seeticket|ticketmaster|netflix|spotify)\b/,
+      'fun',
+      ['entertainment'],
+    ],
+    [/\b(porkbun|namecheap|digitalocean|vercel)\b/, 'work', ['work expenses', 'business expenses']],
   ];
-  const categoryId = mappings.find(
-    ([pattern, id]) => pattern.test(norm) && s.categories.some((c) => c.id === id && !c.archived),
-  )?.[1];
-  return categoryId ? { ...t, categoryId } : t;
+  for (const [pattern, icon, names] of merchants) {
+    if (!pattern.test(name)) continue;
+    const category =
+      s.categories.find((c) => !c.archived && names.includes(c.name.toLowerCase())) ??
+      s.categories.find((c) => !c.archived && (c.id === icon || c.icon === icon));
+    if (category) return { categoryId: category.id, reason: 'Merchant match' };
+  }
+  return null;
+}
+export function applyRules(t: Transaction, s: State): Transaction {
+  const suggestion = categorySuggestion(s, t);
+  if (!suggestion) return t;
+  const norm = effective(t).name.trim().toLowerCase();
+  const rule = s.rules.find(
+    (r) =>
+      r.categoryId === suggestion.categoryId &&
+      s.categories.some((c) => c.id === r.categoryId && !c.archived) &&
+      (!r.accountId || r.accountId === t.accountId) &&
+      (r.match === 'exact'
+        ? norm === r.merchant.trim().toLowerCase()
+        : norm.includes(r.merchant.trim().toLowerCase())),
+  );
+  return {
+    ...t,
+    categoryId: suggestion.categoryId,
+    ...(rule?.name && !t.edits.name ? { name: rule.name } : {}),
+  };
+}
+export function dailyReview(s: State) {
+  const items = s.transactions
+    .filter((t) => !t.removed && !t.reviewed)
+    .map(effective)
+    .sort((a, b) => b.date.localeCompare(a.date) || a.id.localeCompare(b.id));
+  const date = items[0]?.date ?? '';
+  const day = items.filter((t) => t.date === date);
+  const visible = day.slice(0, 6);
+  return { date, total: items.length, dayCount: day.length, items: visible };
 }
 export const fingerprint = (t: {
   date: string;
@@ -438,7 +496,11 @@ export function emptyState(): State {
     },
   };
 }
-export function applyCommand(input: State, command: Command, now = new Date().toISOString()): State {
+export function applyCommand(
+  input: State,
+  command: Command,
+  now = new Date().toISOString(),
+): State {
   const next = applyFinancialCommand(input, command, now);
   return validateState(
     updateNotifications(
@@ -678,7 +740,10 @@ function applyFinancialCommand(input: State, command: Command, now: string): Sta
       );
     }
     case 'import.reconcile-history': {
-      const pairs = z.array(z.object({ importedId: z.string(), providerId: z.string() })).max(10000).parse(p.pairs);
+      const pairs = z
+        .array(z.object({ importedId: z.string(), providerId: z.string() }))
+        .max(10000)
+        .parse(p.pairs);
       return validateState(reconcileHistory(s, pairs));
     }
     case 'import.copilotReview': {

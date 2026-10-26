@@ -10,9 +10,7 @@ import UserNotifications
   var body: some Scene {
     WindowGroup {
       PrivateAppRoot().listStyle(.plain).scrollContentBackground(.hidden).environmentObject(store)
-        .tint(
-          .assetText
-        ).foregroundStyle(Color.assetText).font(
+        .tint(.assetBlue).foregroundStyle(Color.assetText).font(
           .custom("Lato-Regular", size: 16, relativeTo: .body)
         ).preferredColorScheme(appearance == "dark" ? .dark : appearance == "light" ? .light : nil)
         .task(id: store.mode) { await NotificationDelivery.shared.prepare(store: store) }

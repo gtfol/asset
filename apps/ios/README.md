@@ -73,7 +73,7 @@ Normal builds do not require Ruby or project regeneration. If source groups or r
 ruby scripts/generate-ios.rb
 ```
 
-Regenerate the original lettermark from the local Lato font with:
+Regenerate the original curved Asset A icon with Core Graphics (the same geometry used in the web SVG and native header) with:
 
 ```sh
 swift scripts/render-icon.swift

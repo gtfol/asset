@@ -106,7 +106,10 @@ struct TransactionForm: View {
   @State var splits: [SplitDraft] = []
   @State var loaded = false
   var body: some View {
-    FormShell(title: transaction == nil ? "Add transaction" : "Transaction detail", saveTitle: reviewMode ? "Review" : "Save", save: save) {
+    FormShell(
+      title: transaction == nil ? "Add transaction" : "Transaction detail",
+      saveTitle: reviewMode ? "Review" : "Save", save: save
+    ) {
       Section {
         TextField("Merchant or description", text: $name)
         TextField("Date · YYYY-MM-DD", text: $date).keyboardType(.numbersAndPunctuation)
@@ -346,7 +349,9 @@ struct AccountForm: View {
   @State var payment = ""
   @State var dueDate = ""
   @State var loaded = false
-  var connected: Bool { ["plaid", "bitcoin", "venmo", "financekit"].contains(account?.text("source") ?? "") }
+  var connected: Bool {
+    ["plaid", "bitcoin", "venmo", "financekit"].contains(account?.text("source") ?? "")
+  }
   var body: some View {
     FormShell(
       title: account == nil ? "Add manual account" : "Edit account",
@@ -361,9 +366,11 @@ struct AccountForm: View {
           p["creditLimit"] = creditLimit.isEmpty ? NSNull() : try store.cents(creditLimit) as Any
         }
         if type == "loan" && !connected {
-          var loan: JSON = ["lender": lender, "rateType": rateType,
+          var loan: JSON = [
+            "lender": lender, "rateType": rateType,
             "ratePercent": rate.isEmpty ? NSNull() : (Double(rate) ?? -1) as Any,
-            "paymentAmount": payment.isEmpty ? NSNull() : try store.cents(payment) as Any]
+            "paymentAmount": payment.isEmpty ? NSNull() : try store.cents(payment) as Any,
+          ]
           if !dueDate.isEmpty { loan["nextPaymentDate"] = dueDate }
           p["loan"] = loan
         }
@@ -407,10 +414,15 @@ struct AccountForm: View {
             Text("Other lender").tag("other")
           }
           TextField("Annual rate (%)", text: $rate).keyboardType(.decimalPad)
-          Picker("Rate label", selection: $rateType) { Text("APR").tag("APR"); Text("APY").tag("APY") }
+          Picker("Rate label", selection: $rateType) {
+            Text("APR").tag("APR")
+            Text("APY").tag("APY")
+          }
           TextField("Scheduled payment", text: $payment).keyboardType(.decimalPad)
           TextField("Next payment · YYYY-MM-DD", text: $dueDate)
-          Text("Use the balance and rate from your statement. Update the balance after payments; bank withdrawals do not reveal the principal and interest split. These details do not enable automatic lender syncing.").foregroundStyle(Color.assetSecondary)
+          Text(
+            "Use the balance and rate from your statement. Update the balance after payments; bank withdrawals do not reveal the principal and interest split. These details do not enable automatic lender syncing."
+          ).foregroundStyle(Color.assetSecondary)
         }
       }
       if !connected {
@@ -438,7 +450,8 @@ struct AccountForm: View {
         end = a.text("coverageEnd")
         complete = a.flag("coverageComplete")
         let loan = a.object("loan")
-        lender = loan.text("lender", "other"); rateType = loan.text("rateType", "APR")
+        lender = loan.text("lender", "other")
+        rateType = loan.text("rateType", "APR")
         rate = loan.missing("ratePercent") ? "" : String(loan.number("ratePercent"))
         payment = loan.missing("paymentAmount") ? "" : String(loan.number("paymentAmount") / 100)
         dueDate = loan.text("nextPaymentDate")
@@ -578,5 +591,259 @@ struct HoldingForm: View {
         type = h.text("type")
       }
     }
+  }
+}
+
+struct TransactionDetailSheet: View {
+  @EnvironmentObject var store: Store
+  @Environment(\.dismiss) private var dismiss
+  let transaction: Row
+  @State private var category = ""
+  @State private var notes = ""
+  @State private var remember = false
+  @State private var choosing = false
+  @State private var advanced = false
+  @State private var working = false
+  @State private var error = ""
+  @State private var loaded = false
+  private var current: Row {
+    store.transactions.first(where: { $0.id == transaction.id }) ?? transaction
+  }
+  private var dateLabel: String {
+    let parser = DateFormatter()
+    parser.dateFormat = "yyyy-MM-dd"
+    parser.locale = Locale(identifier: "en_US_POSIX")
+    guard let date = parser.date(from: current.text("date")) else { return current.text("date") }
+    return date.formatted(.dateTime.weekday(.wide).month(.abbreviated).day().year())
+  }
+  private var categoryRow: Row {
+    store.categories.first(where: { $0.id == category }) ?? Row(["id": "other", "name": "Other"])
+  }
+  private var account: Row {
+    store.accounts.first(where: { $0.id == current.text("accountId") }) ?? Row([:])
+  }
+  private var changed: Bool {
+    category != current.text("categoryId") || notes != current.text("notes")
+  }
+  private var suggestion: Row { store.calculation("categorySuggestion", [current.data]) }
+  var body: some View {
+    NavigationStack {
+      ScrollView {
+        VStack(spacing: 18) {
+          VStack(spacing: 6) {
+            Text(current.flag("reviewed") ? "Transaction" : "Transaction to review")
+              .font(.custom("Lato-Medium", size: 12, relativeTo: .caption)).foregroundStyle(
+                Color.assetBlue)
+            Text(dateLabel + (current.flag("pending") ? " · Pending" : ""))
+              .font(.custom("Lato-Regular", size: 13, relativeTo: .caption)).foregroundStyle(
+                Color.assetSecondary)
+          }.padding(.top, 22)
+          Text(current.text("name")).font(.custom("Lato-Medium", size: 23, relativeTo: .title2))
+            .multilineTextAlignment(.center).padding(.top, 8)
+          Text(money(current.data["amount"], current.text("currency")))
+            .font(.custom("Lato-Medium", size: 32, relativeTo: .largeTitle)).monospacedDigit()
+            .foregroundStyle(
+              ["income", "refund"].contains(current.text("kind"))
+                ? Color.assetGreen : Color.assetText)
+          TextField("Add a note", text: $notes, axis: .vertical).lineLimit(1...4)
+            .multilineTextAlignment(.center).font(
+              .custom("Lato-Regular", size: 15, relativeTo: .subheadline)
+            )
+            .padding(.bottom, 6).accessibilityLabel("Transaction note")
+          VStack(spacing: 8) {
+            Text("CATEGORY").font(.custom("Lato-Medium", size: 11, relativeTo: .caption2))
+              .foregroundStyle(Color.assetSecondary)
+            Button {
+              choosing = true
+            } label: {
+              CategoryBadge(category: categoryRow).padding(7)
+            }.buttonStyle(.plain).accessibilityLabel("Category: \(categoryRow.text("name"))")
+            if !suggestion.text("categoryId").isEmpty && suggestion.text("categoryId") != category,
+              let match = store.categories.first(where: { $0.id == suggestion.text("categoryId") })
+            {
+              Button("Use \(match.text("name")) · \(suggestion.text("reason"))") {
+                category = match.id
+              }
+              .font(.custom("Lato-Regular", size: 13, relativeTo: .caption)).foregroundStyle(
+                Color.assetBlue
+              ).frame(minHeight: 44)
+            }
+          }
+          if category != current.text("categoryId") {
+            Toggle(isOn: $remember) {
+              VStack(alignment: .leading, spacing: 3) {
+                Text("Use this category next time")
+                Text("Same merchant, same account").font(
+                  .custom("Lato-Regular", size: 12, relativeTo: .caption)
+                ).foregroundStyle(Color.assetSecondary)
+              }
+            }.font(.custom("Lato-Regular", size: 13, relativeTo: .caption)).tint(.assetBlue)
+          }
+          VStack(alignment: .leading, spacing: 12) {
+            Text(account.text("type", "Account").capitalized).font(
+              .custom("Lato-Regular", size: 12, relativeTo: .caption)
+            ).foregroundStyle(Color.assetBlue)
+            HStack(alignment: .bottom) {
+              Text(account.text("name", "Account")).font(
+                .custom("Lato-Medium", size: 14, relativeTo: .subheadline))
+              Spacer()
+              Text(
+                account.text("mask").isEmpty
+                  ? current.text("currency") : "•• \(account.text("mask"))"
+              )
+              .font(.custom("Lato-Regular", size: 12, relativeTo: .caption)).foregroundStyle(
+                Color.assetSecondary)
+            }
+          }.padding(18).frame(maxWidth: 280).background(
+            Color.assetBlueWash, in: RoundedRectangle(cornerRadius: 16))
+          if current.flag("excluded") {
+            Text("Excluded from budget").font(
+              .custom("Lato-Regular", size: 12, relativeTo: .caption)
+            ).foregroundStyle(Color.assetSecondary)
+          }
+          if !current.rows("splits").isEmpty {
+            Text("Split across \(current.rows("splits").count) categories").font(
+              .custom("Lato-Regular", size: 12, relativeTo: .caption)
+            ).foregroundStyle(Color.assetSecondary)
+          }
+          if !error.isEmpty {
+            Text(error).font(.custom("Lato-Regular", size: 13, relativeTo: .caption))
+              .foregroundStyle(Color.assetError)
+          }
+        }.padding(.horizontal, 24).padding(.bottom, 24).frame(maxWidth: .infinity)
+      }.background(Color.assetSurface).foregroundStyle(Color.assetText)
+        .toolbar(.hidden, for: .navigationBar)
+        .safeAreaInset(edge: .bottom) {
+          ViewThatFits(in: .horizontal) {
+            HStack(spacing: 10) {
+              moreButton
+              Spacer(minLength: 0)
+              if changed && !current.flag("reviewed") { saveButton }
+              reviewButton
+            }
+            VStack(spacing: 10) {
+              reviewButton
+              HStack {
+                moreButton
+                Spacer()
+                if changed && !current.flag("reviewed") { saveButton }
+              }
+            }
+          }.padding(.horizontal, 20).padding(.vertical, 12).background(Color.assetSurface)
+        }
+    }.presentationDetents([.height(620), .large]).presentationDragIndicator(.visible)
+      .presentationCornerRadius(28).presentationBackground(Color.assetSurface)
+      .interactiveDismissDisabled(working).disabled(working)
+      .sheet(isPresented: $choosing) { TransactionCategorySheet(value: $category) }
+      .sheet(isPresented: $advanced) { TransactionForm(transaction: current) }
+      .onChange(of: advanced) { _, open in
+        if !open {
+          category = current.text("categoryId")
+          notes = current.text("notes")
+          remember = false
+        }
+      }
+      .onAppear {
+        if !loaded {
+          category = current.text("categoryId")
+          notes = current.text("notes")
+          loaded = true
+        }
+      }
+  }
+  private var moreButton: some View {
+    Button("More details") { commit(review: false, close: false) { advanced = true } }.buttonStyle(
+      AssetBorderButtonStyle())
+  }
+  private var saveButton: some View {
+    Button("Save") { commit(review: false) }.foregroundStyle(Color.assetBlue).frame(minHeight: 44)
+  }
+  private var reviewButton: some View {
+    Button {
+      commit(review: !current.flag("reviewed"))
+    } label: {
+      Label(
+        working ? "Saving…" : current.flag("reviewed") ? "Save changes" : "Mark as reviewed",
+        systemImage: "checkmark")
+    }.buttonStyle(AssetPrimaryButtonStyle())
+  }
+  private func commit(review: Bool, close: Bool = true, after: @escaping () -> Void = {}) {
+    guard !working else { return }
+    working = true
+    error = ""
+    let generation = store.workspaceGeneration
+    let original = current
+    let chosenCategory = category
+    let chosenNotes = notes
+    let learn = remember
+    Task { @MainActor in
+      defer { working = false }
+      do {
+        var edits: JSON = ["notes": chosenNotes]
+        if chosenCategory != original.text("categoryId") { edits["categoryId"] = chosenCategory }
+        if chosenCategory != original.text("categoryId") || chosenNotes != original.text("notes") {
+          try await store.command("transaction.update", ["id": original.id, "edits": edits])
+        }
+        guard generation == store.workspaceGeneration else { return }
+        if learn && chosenCategory != original.text("categoryId") {
+          let existingRule = store.row.rows("rules").first {
+            $0.text("match") == "exact" && $0.text("accountId") == original.text("accountId")
+              && $0.text("merchant").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                == original.text("name").trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased()
+          }
+          try await store.command(
+            "rule.save",
+            [
+              "id": existingRule?.id ?? uid(), "merchant": original.text("name"), "match": "exact",
+              "accountId": original.text("accountId"), "categoryId": chosenCategory,
+            ])
+        }
+        guard generation == store.workspaceGeneration else { return }
+        if review {
+          try await store.command("transactions.review", ["ids": [original.id], "reviewed": true])
+        }
+        guard generation == store.workspaceGeneration else { return }
+        if close { dismiss() } else { after() }
+      } catch {
+        if generation == store.workspaceGeneration { self.error = error.localizedDescription }
+      }
+    }
+  }
+}
+
+struct TransactionCategorySheet: View {
+  @EnvironmentObject var store: Store
+  @Environment(\.dismiss) private var dismiss
+  @Binding var value: String
+  @State private var search = ""
+  var body: some View {
+    NavigationStack {
+      List {
+        ForEach(
+          store.categories.filter {
+            !$0.flag("archived")
+              && (search.isEmpty || $0.text("name").localizedCaseInsensitiveContains(search))
+          }
+        ) { category in
+          Button {
+            value = category.id
+            dismiss()
+          } label: {
+            HStack {
+              CategoryBadge(category: category)
+              Spacer()
+              if category.id == value {
+                Image(systemName: "checkmark").foregroundStyle(Color.assetBlue)
+              }
+            }.frame(minHeight: 40).contentShape(Rectangle())
+          }.listRowBackground(Color.assetSurface)
+        }
+      }.searchable(text: $search, prompt: "Search categories").navigationTitle("Category")
+        .navigationBarTitleDisplayMode(.inline).scrollContentBackground(.hidden).background(
+          Color.assetBackground
+        )
+        .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } } }
+    }.tint(.assetBlue).presentationDetents([.medium, .large]).presentationDragIndicator(.visible)
   }
 }

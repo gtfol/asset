@@ -40,7 +40,15 @@ const categorySymbols: Record<CategoryIconKey, LucideIcon> = {
 
 export function CategorySymbol({ category }: { category?: Pick<Category, 'id' | 'icon'> }) {
   const Icon = categorySymbols[categoryIconKey(category)];
-  return <Icon className="category-symbol" size={16} strokeWidth={1.5} aria-hidden="true" />;
+  return (
+    <Icon
+      className="category-symbol"
+      data-tone={categoryIconKey(category)}
+      size={16}
+      strokeWidth={1.5}
+      aria-hidden="true"
+    />
+  );
 }
 export function Modal({
   title,
@@ -91,9 +99,9 @@ export function Modal({
 }
 export function Badge({ category }: { category: Category | undefined }) {
   return (
-    <span className="category-badge">
+    <span className="category-badge" data-tone={categoryIconKey(category)}>
       <CategorySymbol category={category} />
-      {category?.name ?? 'Other'}
+      <span>{category?.name ?? 'Other'}</span>
     </span>
   );
 }

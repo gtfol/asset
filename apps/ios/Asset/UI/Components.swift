@@ -21,18 +21,15 @@ extension Color {
         ? UIColor(red: 0.83, green: 0.70, blue: 0.42, alpha: 1)
         : UIColor(red: 0.52, green: 0.38, blue: 0.11, alpha: 1)
     })
-  static let assetBlue = Color(
-    uiColor: UIColor {
-      $0.userInterfaceStyle == .dark
-        ? UIColor(red: 0.54, green: 0.68, blue: 0.94, alpha: 1)
-        : UIColor(red: 0.24, green: 0.44, blue: 0.78, alpha: 1)
-    })
-  static let assetText = adaptive(light: 0x111111, dark: 0xeeeeee)
-  static let assetSecondary = adaptive(light: 0x686868, dark: 0xaaaaaa)
-  static let assetDivider = adaptive(light: 0xe5e5e5, dark: 0x2c2c2c)
+  static let assetBlue = adaptive(light: 0x2774dc, dark: 0x83b5ff)
+  static let assetText = adaptive(light: 0x203354, dark: 0xe5edfa)
+  static let assetSecondary = adaptive(light: 0x75839a, dark: 0xa1b0c7)
+  static let assetDivider = adaptive(light: 0xe2e8f1, dark: 0x2b3b51)
   static let assetError = adaptive(light: 0xac3030, dark: 0xef9696)
-  static let assetBackground = adaptive(light: 0xffffff, dark: 0x000000)
-  private static func adaptive(light: UInt, dark: UInt) -> Color {
+  static let assetBackground = adaptive(light: 0xf5f8fc, dark: 0x101927)
+  static let assetSurface = adaptive(light: 0xffffff, dark: 0x1a2638)
+  static let assetBlueWash = adaptive(light: 0xeaf2ff, dark: 0x233c60)
+  static func adaptive(light: UInt, dark: UInt) -> Color {
     Color(
       uiColor: UIColor { traits in
         let value = traits.userInterfaceStyle == .dark ? dark : light
@@ -47,10 +44,54 @@ struct AssetBorderButtonStyle: ButtonStyle {
   @Environment(\.isEnabled) var isEnabled
   func makeBody(configuration: Configuration) -> some View {
     configuration.label.padding(.horizontal, 16).frame(minHeight: 44)
-      .foregroundStyle(Color.assetText)
-      .background(configuration.isPressed ? Color.assetDivider : Color.clear)
-      .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color.assetDivider, lineWidth: 1))
-      .contentShape(Rectangle()).opacity(isEnabled ? 1 : 0.5)
+      .foregroundStyle(Color.assetBlue)
+      .background(
+        configuration.isPressed ? Color.assetBlueWash : Color.assetSurface,
+        in: RoundedRectangle(cornerRadius: 14)
+      )
+      .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.assetDivider, lineWidth: 1))
+      .opacity(isEnabled ? 1 : 0.5)
+  }
+}
+struct AssetPrimaryButtonStyle: ButtonStyle {
+  @Environment(\.isEnabled) var isEnabled
+  var soft = false
+  func makeBody(configuration: Configuration) -> some View {
+    configuration.label.font(.custom("Lato-Medium", size: 15, relativeTo: .subheadline))
+      .padding(.horizontal, 18).frame(minHeight: 48)
+      .foregroundStyle(soft ? Color.assetBlue : Color.white)
+      .background(soft ? Color.assetBlueWash : Color(hex: "2774dc"), in: Capsule())
+      .opacity(!isEnabled ? 0.45 : configuration.isPressed ? 0.7 : 1)
+  }
+}
+struct AssetMark: View {
+  var body: some View {
+    GeometryReader { geometry in
+      ZStack {
+        RoundedRectangle(cornerRadius: geometry.size.width * 0.25).fill(Color(hex: "2774dc"))
+        Path { p in
+          p.move(to: CGPoint(x: 17, y: 46))
+          p.addLine(to: CGPoint(x: 28, y: 20))
+          p.addQuadCurve(to: CGPoint(x: 36, y: 20), control: CGPoint(x: 32, y: 11))
+          p.addLine(to: CGPoint(x: 47, y: 46))
+        }.applying(
+          CGAffineTransform(scaleX: geometry.size.width / 64, y: geometry.size.height / 64)
+        )
+        .stroke(
+          .white,
+          style: StrokeStyle(
+            lineWidth: geometry.size.width * 6 / 64, lineCap: .round, lineJoin: .round))
+        Path { p in
+          p.move(to: CGPoint(x: 23, y: 38))
+          p.addQuadCurve(to: CGPoint(x: 41, y: 32), control: CGPoint(x: 33, y: 43))
+        }.applying(
+          CGAffineTransform(scaleX: geometry.size.width / 64, y: geometry.size.height / 64)
+        )
+        .stroke(
+          Color(hex: "b9e7ff"),
+          style: StrokeStyle(lineWidth: geometry.size.width * 5 / 64, lineCap: .round))
+      }
+    }.accessibilityHidden(true)
   }
 }
 struct AssetEmptyState: View {
@@ -67,17 +108,18 @@ struct AssetEmptyState: View {
 }
 struct Card<Content: View>: View {
   var title: String = ""
+  var spacing: CGFloat = 16
   @ViewBuilder var content: Content
   var body: some View {
-    VStack(alignment: .leading, spacing: 16) {
+    VStack(alignment: .leading, spacing: spacing) {
       if !title.isEmpty {
-        Text(title).font(.custom("Lato-Regular", size: 17, relativeTo: .headline))
+        Text(title).font(.custom("Lato-Medium", size: 13, relativeTo: .caption))
           .foregroundStyle(Color.assetSecondary)
       }
       content
-    }.padding(.vertical, 16).frame(maxWidth: .infinity, alignment: .leading).overlay(
-      alignment: .bottom
-    ) { Rectangle().fill(Color.assetDivider).frame(height: 0.5) }
+    }.padding(20).frame(maxWidth: .infinity, alignment: .leading)
+      .background(Color.assetSurface, in: RoundedRectangle(cornerRadius: 22))
+      .overlay(RoundedRectangle(cornerRadius: 22).stroke(Color.assetDivider, lineWidth: 0.7))
   }
 }
 struct Metric: View {
@@ -120,6 +162,17 @@ enum CategorySymbol {
     default: "square.grid.2x2"
     }
   }
+  static func color(_ category: Row) -> Color {
+    switch key(category) {
+    case "groceries", "income": Color.adaptive(light: 0x258465, dark: 0x76c7a9)
+    case "restaurants", "coffee": Color.adaptive(light: 0xb45f25, dark: 0xeab07d)
+    case "transport", "travel": Color.adaptive(light: 0x247e9b, dark: 0x77c4dc)
+    case "shopping", "education": Color.adaptive(light: 0x8262be, dark: 0xbba1e7)
+    case "fun", "health": Color.adaptive(light: 0xbc507e, dark: 0xe394b4)
+    case "home", "utilities": Color.assetBlue
+    default: Color.assetSecondary
+    }
+  }
   static func label(_ key: String) -> String {
     switch key {
     case "transport": "Transportation"
@@ -134,18 +187,20 @@ struct CategoryIcon: View {
     Image(systemName: CategorySymbol.name(CategorySymbol.key(category)))
       .font(.system(size: 16, weight: .regular))
       .symbolRenderingMode(.monochrome)
-      .foregroundStyle(Color.assetSecondary)
-      .frame(width: 24)
+      .foregroundStyle(CategorySymbol.color(category))
+      .frame(width: 16)
       .accessibilityHidden(true)
   }
 }
 struct CategoryBadge: View {
   let category: Row
   var body: some View {
-    HStack(spacing: 8) {
+    HStack(spacing: 5) {
       CategoryIcon(category: category)
-      Text(category.text("name", "Other"))
-    }.font(.custom("Lato-Regular", size: 13, relativeTo: .caption)).padding(.vertical, 4)
+      Text(category.text("name", "Other")).lineLimit(1)
+    }.font(.custom("Lato-Medium", size: 11, relativeTo: .caption2))
+      .foregroundStyle(CategorySymbol.color(category)).padding(.horizontal, 9).padding(.vertical, 5)
+      .background(CategorySymbol.color(category).opacity(0.10), in: Capsule())
   }
 }
 struct StatusLabel: View {
@@ -173,7 +228,11 @@ extension View {
       .toolbarBackground(.visible, for: .navigationBar)
       .toolbar {
         ToolbarItem(placement: .principal) {
-          Text(title).font(.custom("Lato-Regular", size: 17, relativeTo: .headline))
+          HStack(spacing: 8) {
+            if title == "asset" { AssetMark().frame(width: 26, height: 26) }
+            Text(title).font(.custom("Lato-Medium", size: 17, relativeTo: .headline))
+              .foregroundStyle(Color.assetText)
+          }
         }.quietBackground()
       }
   }
@@ -226,6 +285,8 @@ struct HistoryChart: View {
   var forecast: Double? = nil
   var finalDay: Int? = nil
   var budget: Double? = nil
+  var height: CGFloat = 185
+  var showsLatestValue = true
   @State private var selection: Int?
   private var yDomain: ClosedRange<Double> {
     let values =
@@ -345,9 +406,9 @@ struct HistoryChart: View {
                 }
               }
             }
-          }.frame(height: 185).padding(.top, finalDay == nil ? 8 : 24)
+          }.frame(height: height).padding(.top, finalDay == nil ? 8 : 24)
       }
-      if let p = selectedPoint ?? points.last {
+      if let p = selectedPoint ?? (showsLatestValue ? points.last : nil) {
         Text(
           "\(selectedPoint == nil ? "Latest" : "Selected"): \(p.label) · \(money(p.value,currency))"
         ).font(
@@ -415,10 +476,12 @@ struct TransactionLine: View {
       CategoryIcon(category: c)
       VStack(alignment: .leading, spacing: 4) {
         Text(tx.text("name")).font(.custom("Lato-Regular", size: 15, relativeTo: .subheadline))
-        Text((store.account(id: tx.text("accountId"))?.text("name") ?? "Account")
-          + (showCategory ? " · \(c.text("name", "Other"))" : ""))
-          .font(.custom("Lato-Regular", size: 12, relativeTo: .caption2)).foregroundStyle(
-            Color.assetSecondary)
+        Text(
+          (store.account(id: tx.text("accountId"))?.text("name") ?? "Account")
+            + (showCategory ? " · \(c.text("name", "Other"))" : "")
+        )
+        .font(.custom("Lato-Regular", size: 12, relativeTo: .caption2)).foregroundStyle(
+          Color.assetSecondary)
         if tx.flag("pending") || tx.flag("excluded") {
           Text(tx.flag("pending") ? "Pending" : "Budget excluded").font(
             .custom("Lato-Regular", size: 12, relativeTo: .caption2)

@@ -6,25 +6,19 @@ import ImageIO
 import UniformTypeIdentifiers
 
 let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
-CTFontManagerRegisterFontsForURL(
-  root.appendingPathComponent("Asset/Resources/Lato-Medium.ttf") as CFURL, .process, nil)
-let context = CGContext(
-  data: nil, width: 1024, height: 1024, bitsPerComponent: 8, bytesPerRow: 4096,
-  space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue)!
-context.setFillColor(CGColor(red: 62.0 / 255, green: 111.0 / 255, blue: 198.0 / 255, alpha: 1))
+// Original open-arch A mark, shared geometrically with public/icon.svg.
+let context = CGContext(data: nil, width: 1024, height: 1024, bitsPerComponent: 8, bytesPerRow: 4096,
+  space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue)!
+context.setFillColor(CGColor(red: 39.0/255, green: 116.0/255, blue: 220.0/255, alpha: 1))
 context.fill(CGRect(x: 0, y: 0, width: 1024, height: 1024))
-let font = CTFontCreateWithName("Lato-Medium" as CFString, 820, nil)
-let string = NSAttributedString(
-  string: "a",
-  attributes: [
-    NSAttributedString.Key(kCTFontAttributeName as String): font,
-    NSAttributedString.Key(kCTForegroundColorAttributeName as String): CGColor(gray: 1, alpha: 1),
-  ])
-let line = CTLineCreateWithAttributedString(string)
-let bounds = CTLineGetBoundsWithOptions(line, .useGlyphPathBounds)
-context.textPosition = CGPoint(
-  x: (1024 - bounds.width) / 2 - bounds.minX, y: (1024 - bounds.height) / 2 - bounds.minY)
-CTLineDraw(line, context)
+context.translateBy(x: 0, y: 1024); context.scaleBy(x: 16, y: -16)
+context.setLineCap(.round); context.setLineJoin(.round)
+context.setStrokeColor(CGColor(gray: 1, alpha: 1)); context.setLineWidth(6)
+context.move(to: CGPoint(x: 17, y: 46)); context.addLine(to: CGPoint(x: 28, y: 20))
+context.addQuadCurve(to: CGPoint(x: 36, y: 20), control: CGPoint(x: 32, y: 11))
+context.addLine(to: CGPoint(x: 47, y: 46)); context.strokePath()
+context.setStrokeColor(CGColor(red: 185.0/255, green: 231.0/255, blue: 1, alpha: 1)); context.setLineWidth(5)
+context.move(to: CGPoint(x: 23, y: 38)); context.addQuadCurve(to: CGPoint(x: 41, y: 32), control: CGPoint(x: 33, y: 43)); context.strokePath()
 let target = root.appendingPathComponent("Asset/Assets.xcassets/AppIcon.appiconset")
 try FileManager.default.createDirectory(at: target, withIntermediateDirectories: true)
 let destination = CGImageDestinationCreateWithURL(

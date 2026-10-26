@@ -3,6 +3,7 @@ import React, { useState } from 'react';
 import { X, Check, Plus, Split, Download, Upload } from 'lucide-react';
 import {
   effective,
+  categorySuggestion,
   money,
   parseMoney,
   today,
@@ -54,6 +55,205 @@ function CategorySelect({
   );
 }
 export function TransactionEditor({
+  transaction,
+  state,
+  run,
+  onClose,
+}: {
+  transaction: Transaction;
+  reviewMode?: boolean;
+  state: State;
+  run: Run;
+  onClose: () => void;
+}) {
+  const t = effective(transaction);
+  const [category, setCategory] = useState(t.categoryId);
+  const [notes, setNotes] = useState(t.notes);
+  const [choose, setChoose] = useState(false);
+  const [search, setSearch] = useState('');
+  const [remember, setRemember] = useState(false);
+  const [advanced, setAdvanced] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const suggestion = categorySuggestion(state, transaction);
+  const account = state.accounts.find((a) => a.id === t.accountId);
+  async function save(reviewed: boolean, close = true) {
+    if (busy) return false;
+    setBusy(true);
+    setError('');
+    try {
+      const edits = { notes, ...(category !== t.categoryId ? { categoryId: category } : {}) };
+      if (category !== t.categoryId || notes !== t.notes)
+        await run({ type: 'transaction.update', payload: { id: t.id, edits } });
+      if (remember && category !== t.categoryId)
+        await run({
+          type: 'rule.save',
+          payload: {
+            id:
+              state.rules.find(
+                (r) =>
+                  r.match === 'exact' &&
+                  r.accountId === t.accountId &&
+                  r.merchant.trim().toLowerCase() === t.name.trim().toLowerCase(),
+              )?.id ?? uid(),
+            merchant: t.name,
+            match: 'exact',
+            accountId: t.accountId,
+            categoryId: category,
+          },
+        });
+      if (reviewed)
+        await run({ type: 'transactions.review', payload: { ids: [t.id], reviewed: true } });
+      if (close) onClose();
+      return true;
+    } catch (e) {
+      setError((e as Error).message);
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  }
+  if (advanced)
+    return (
+      <AdvancedTransactionEditor
+        transaction={transaction}
+        state={state}
+        run={run}
+        onClose={onClose}
+      />
+    );
+  return (
+    <Modal
+      title={t.reviewed ? 'Transaction' : 'Transaction to review'}
+      onClose={() => {
+        if (!busy) onClose();
+      }}
+      className="transaction-sheet"
+    >
+      <div className="transaction-summary">
+        <p className="detail-date">
+          {new Date(t.date + 'T12:00:00').toLocaleDateString('en-US', {
+            weekday: 'long',
+            month: 'short',
+            day: 'numeric',
+            year: 'numeric',
+          })}
+          {t.pending ? ' · Pending' : ''}
+        </p>
+        <h2>{t.name}</h2>
+        <div
+          className={'detail-amount ' + (['income', 'refund'].includes(t.kind) ? 'positive' : '')}
+        >
+          {['income', 'refund'].includes(t.kind) ? '+' : ''}
+          {money(t.amount, t.currency)}
+        </div>
+        <textarea
+          aria-label="Transaction note"
+          className="detail-note"
+          rows={2}
+          placeholder="Add a note"
+          value={notes}
+          onChange={(e) => setNotes(e.target.value)}
+          disabled={busy}
+        />
+        <span className="detail-label">Category</span>
+        <button
+          className="detail-category"
+          onClick={() => setChoose(!choose)}
+          aria-expanded={choose}
+          disabled={busy}
+        >
+          <Badge category={state.categories.find((c) => c.id === category)} />
+        </button>
+        {suggestion && suggestion.categoryId !== category && (
+          <button
+            className="suggestion-button"
+            disabled={busy}
+            onClick={() => setCategory(suggestion.categoryId)}
+          >
+            Use {state.categories.find((c) => c.id === suggestion.categoryId)?.name}{' '}
+            <small>· {suggestion.reason}</small>
+          </button>
+        )}
+        {choose && (
+          <section className="category-chooser" aria-label="Choose category">
+            <input
+              aria-label="Search categories"
+              placeholder="Search categories"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+            <div>
+              {state.categories
+                .filter((c) => !c.archived && c.name.toLowerCase().includes(search.toLowerCase()))
+                .map((c) => (
+                  <button
+                    key={c.id}
+                    aria-pressed={category === c.id}
+                    onClick={() => {
+                      setCategory(c.id);
+                      setChoose(false);
+                    }}
+                  >
+                    <Badge category={c} />
+                    {category === c.id && <Check size={14} />}
+                  </button>
+                ))}
+            </div>
+          </section>
+        )}
+        {category !== t.categoryId && (
+          <button
+            role="switch"
+            aria-checked={remember}
+            className="remember-category"
+            onClick={() => setRemember(!remember)}
+            disabled={busy}
+          >
+            <span className={'toggle-track ' + (remember ? 'on' : '')} />
+            <span>
+              Use this category next time<small>Same merchant, same account</small>
+            </span>
+          </button>
+        )}
+        <div className="detail-account">
+          <span>
+            {account ? account.type.charAt(0).toUpperCase() + account.type.slice(1) : 'Account'}
+          </span>
+          <strong>{account?.name ?? 'Account'}</strong>
+          <small>{account?.mask ? '•• ' + account.mask : t.currency}</small>
+        </div>
+        {t.excluded && <p className="muted tiny">Excluded from budget</p>}
+        {t.splits.length > 0 && (
+          <p className="muted tiny">Split across {t.splits.length} categories</p>
+        )}
+      </div>
+      <ErrorText error={error} />
+      <div className="detail-actions">
+        <button
+          className="border-button"
+          disabled={busy}
+          onClick={async () => {
+            if (await save(false, false)) setAdvanced(true);
+          }}
+        >
+          More details
+        </button>
+        {(category !== t.categoryId || notes !== t.notes) && !t.reviewed && (
+          <button className="quiet" disabled={busy} onClick={() => void save(false)}>
+            Save
+          </button>
+        )}
+        <button className="primary" disabled={busy} onClick={() => void save(!t.reviewed)}>
+          <Check size={16} />
+          {busy ? 'Saving…' : t.reviewed ? 'Save changes' : 'Mark as reviewed'}
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
+function AdvancedTransactionEditor({
   transaction,
   reviewMode = false,
   state,

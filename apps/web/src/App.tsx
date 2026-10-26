@@ -325,6 +325,7 @@ export function App() {
     <div className="app-shell">
       <aside className={'sidebar ' + (sidebar ? 'open' : '')}>
         <div className="brand">
+          <img src="/icon.svg" alt="" />
           asset
           <button
             className="icon-button mobile-only"
@@ -577,7 +578,6 @@ export function App() {
                   </span>
                 </div>
               </section>
-              <WorthCard worth={worth} currency={currency} onOpen={() => navigate('Accounts')} />
               <ReviewQueue
                 key={sessionId || 'local'}
                 state={state}
@@ -586,6 +586,7 @@ export function App() {
                 onOpen={setSelected}
                 onViewAll={() => txNavigate({ review: 'unreviewed' })}
               />
+              <WorthCard worth={worth} currency={currency} onOpen={() => navigate('Accounts')} />
               <section className="card">
                 <div className="card-heading">
                   <h3>Trending budgets</h3>
