@@ -12,6 +12,8 @@ Synthetic browser checks verified daily review **242 → 236**, Undo **236 → 2
 
 Signed iOS **0.1.0 (7)** archived and uploaded successfully at **9:35 PM Pacific**. The app and provisioning profile both contain `com.apple.developer.financekit: ["financial-data"]`. Apple reported the package processing; the existing missing LinkKit dSYM warning is non-blocking. App Store Connect signed out after upload, so tester availability is pending a renewed browser sign-in. Real Apple Wallet consent and sync remain unverified and require a physical iPhone.
 
+Commit `87a951b` passed GitHub Web checks and deployed to production as `dpl_F4qCCefshNtcow2cAbqchyLAj8wN` at 9:46 PM Pacific. The signed-in live browser loaded the matching `index-B-g0GS6w.js` bundle, showed the new mark and daily **Mark as reviewed** card, and reported Synced. The live review card contains no selection checkboxes. No production transaction was edited or marked reviewed during this verification.
+
 Proof uses synthetic data: [web review dashboard](screenshots/review7-web-mobile-dashboard.png), [web detail sheet](screenshots/review7-web-detail.png), [web dark sheet](screenshots/review7-web-dark.png), [iPhone detail sheet](screenshots/review7-ios-detail.png).
 
 ## October 25: dashboard review and Apple activation
