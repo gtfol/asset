@@ -6,6 +6,8 @@ Applied the approved Layers design to the web favicon/header, native header, and
 
 The production web build, simulator build, signed archive, and diff whitespace checks pass. The icon's dimensions and lack of alpha were checked, and the actual web and iPhone headers were visually inspected. The web build used the previously verified clean source copy with the updated SVG; the JavaScript and CSS bundle hashes remain unchanged. No financial logic or records changed. Build **0.1.0 (8)** preserves the FinanceKit entitlement in both the app and signing profile.
 
+Commit `30e9087` passed GitHub Web checks (216 tests and production build) and deployed as `dpl_2DVb5VZ3uoF89umTV1EgkB5XqiwM`. The production `/icon.svg` response matches the approved source byte for byte. The installed simulator Home Screen icon was also visually checked. Build 8 uploaded successfully at **9:30 PM Pacific** on October 26; Apple reported that the package was processing. The existing missing LinkKit dSYM warning remains non-blocking. TestFlight availability is not yet confirmed because the App Store Connect browser session expired.
+
 Proof: [web header](screenshots/layers8-web-header.png), [iPhone header](screenshots/layers8-ios-header.png).
 
 ## October 25: daily review cards and visual refresh
