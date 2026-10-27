@@ -8,7 +8,7 @@ The October 25 direction combines Asset's Lato typography and content hierarchy 
 - Categories have compact colored labels and Lucide/SF Symbols: green groceries/income, orange dining/coffee, teal transport/travel, violet shopping/education, rose entertainment/health, blue home/utilities.
 - Lato text is mostly regular or medium at 13–16px (native 13–17pt). Tabular financial values have more emphasis; large headings do not compete with the data.
 - Use 20px mobile gutters and 32px desktop gutters, at least 44px touch targets, responsive wrapping, Dynamic Type, readable dark appearance, and reduced-motion support.
-- The original Asset logo is a rounded, open A with an upward curved crossbar, white and pale blue on blue. The web SVG, native header, and generated app icon share its geometry.
+- The Asset Layers logo uses a white rounded diamond above a slim pale-blue layer, on a diagonal blue gradient. Tangent corners and consistent spacing keep it smooth at small sizes. The web SVG, native header, and generated app icon share its geometry.
 - Chart estimates remain visibly distinguished from recorded history. Color always accompanies a label or value.
 
 ## Dashboard transaction review

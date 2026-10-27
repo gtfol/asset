@@ -1,1 +1,8 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="16" fill="#2774dc"/><path d="M17 46 28 20Q32 11 36 20L47 46" fill="none" stroke="#fff" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/><path d="M23 38Q33 43 41 32" fill="none" stroke="#b9e7ff" stroke-width="5" stroke-linecap="round"/></svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="Asset">
+  <defs><linearGradient id="blue" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#3989f4"/><stop offset="1" stop-color="#2265d5"/></linearGradient></defs>
+  <rect width="256" height="256" rx="58" fill="url(#blue)"/>
+  <g transform="translate(128 128) scale(1.08) translate(-128 -126)">
+    <path d="M124.6575 81.3370A9 9 0 0 1 131.3425 81.3370L187.1093 103.6437A9 9 0 0 1 187.1093 120.3563L131.3425 142.6630A9 9 0 0 1 124.6575 142.6630L68.8907 120.3563A9 9 0 0 1 68.8907 103.6437Z" fill="#fff"/>
+    <path d="M68 144L122 165.6Q128 168 134 165.6L188 144" fill="none" stroke="#c7efff" stroke-width="11" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+</svg>

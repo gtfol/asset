@@ -1,5 +1,13 @@
 # Verification record
 
+## October 26: refined Layers logo
+
+Applied the approved Layers design to the web favicon/header, native header, and iOS app icon. The three versions share tangent circular corners, a slim pale-blue lower stroke, and a diagonal blue gradient. The generated 1024px app icon is opaque with a square canvas for the system's corner mask; its colors explicitly use sRGB.
+
+The production web build, simulator build, signed archive, and diff whitespace checks pass. The icon's dimensions and lack of alpha were checked, and the actual web and iPhone headers were visually inspected. The web build used the previously verified clean source copy with the updated SVG; the JavaScript and CSS bundle hashes remain unchanged. No financial logic or records changed. Build **0.1.0 (8)** preserves the FinanceKit entitlement in both the app and signing profile.
+
+Proof: [web header](screenshots/layers8-web-header.png), [iPhone header](screenshots/layers8-ios-header.png).
+
 ## October 25: daily review cards and visual refresh
 
 Dashboard review now groups the newest unreviewed date into cards with at most six visible transactions. Each card has one **Mark as reviewed** action and Undo; reviewing advances to the next batch or day. Tapping a row opens a compact detail sheet with category search, notes, separate Save and review actions, and access to the existing advanced editor. Category corrections can save an account-scoped merchant rule. Existing matching rules are updated instead of duplicated. The main review flow does not use selection checkboxes.

@@ -67,29 +67,32 @@ struct AssetPrimaryButtonStyle: ButtonStyle {
 struct AssetMark: View {
   var body: some View {
     GeometryReader { geometry in
+      let scale = geometry.size.width / 256
+      let symbolTransform = CGAffineTransform(
+        a: scale * 1.08, b: 0, c: 0, d: scale * 1.08,
+        tx: scale * -10.24, ty: scale * -8.08)
       ZStack {
-        RoundedRectangle(cornerRadius: geometry.size.width * 0.25).fill(Color(hex: "2774dc"))
+        RoundedRectangle(cornerRadius: scale * 58, style: .circular)
+          .fill(LinearGradient(colors: [Color(hex: "3989f4"), Color(hex: "2265d5")],
+                               startPoint: .topLeading, endPoint: .bottomTrailing))
+        // Tangent circular corners match public/icon.svg and scripts/render-icon.swift.
         Path { p in
-          p.move(to: CGPoint(x: 17, y: 46))
-          p.addLine(to: CGPoint(x: 28, y: 20))
-          p.addQuadCurve(to: CGPoint(x: 36, y: 20), control: CGPoint(x: 32, y: 11))
-          p.addLine(to: CGPoint(x: 47, y: 46))
-        }.applying(
-          CGAffineTransform(scaleX: geometry.size.width / 64, y: geometry.size.height / 64)
-        )
-        .stroke(
-          .white,
-          style: StrokeStyle(
-            lineWidth: geometry.size.width * 6 / 64, lineCap: .round, lineJoin: .round))
+          p.move(to: CGPoint(x: 124.6575, y: 81.3370))
+          p.addArc(tangent1End: CGPoint(x: 128, y: 80), tangent2End: CGPoint(x: 208, y: 112), radius: 9)
+          p.addArc(tangent1End: CGPoint(x: 208, y: 112), tangent2End: CGPoint(x: 128, y: 144), radius: 9)
+          p.addArc(tangent1End: CGPoint(x: 128, y: 144), tangent2End: CGPoint(x: 48, y: 112), radius: 9)
+          p.addArc(tangent1End: CGPoint(x: 48, y: 112), tangent2End: CGPoint(x: 128, y: 80), radius: 9)
+          p.closeSubpath()
+        }.applying(symbolTransform).fill(.white)
         Path { p in
-          p.move(to: CGPoint(x: 23, y: 38))
-          p.addQuadCurve(to: CGPoint(x: 41, y: 32), control: CGPoint(x: 33, y: 43))
-        }.applying(
-          CGAffineTransform(scaleX: geometry.size.width / 64, y: geometry.size.height / 64)
-        )
+          p.move(to: CGPoint(x: 68, y: 144))
+          p.addLine(to: CGPoint(x: 122, y: 165.6))
+          p.addQuadCurve(to: CGPoint(x: 134, y: 165.6), control: CGPoint(x: 128, y: 168))
+          p.addLine(to: CGPoint(x: 188, y: 144))
+        }.applying(symbolTransform)
         .stroke(
-          Color(hex: "b9e7ff"),
-          style: StrokeStyle(lineWidth: geometry.size.width * 5 / 64, lineCap: .round))
+          Color(hex: "c7efff"),
+          style: StrokeStyle(lineWidth: scale * 1.08 * 11, lineCap: .round, lineJoin: .round))
       }
     }.accessibilityHidden(true)
   }
