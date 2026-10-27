@@ -371,7 +371,11 @@ export function App() {
                   >
                     <span className={'account-dot ' + a.type} />
                     <span>{a.name}</span>
-                    <small>{money(a.balance, a.currency).replace(/\.00$/, '')}</small>
+                    <small>
+                      {a.source === 'venmo' && a.balance == null
+                        ? 'Receipts only'
+                        : money(a.balance, a.currency).replace(/\.00$/, '')}
+                    </small>
                   </button>
                 ))}
             </section>
@@ -1647,7 +1651,9 @@ function Accounts({
                           </small>
                         </span>
                         <b>
-                          {money(a.balance, a.currency)}
+                          {a.source === 'venmo' && a.balance == null
+                            ? 'Receipts only'
+                            : money(a.balance, a.currency)}
                           <small>
                             {a.includeInNetWorth
                               ? 'Included in net worth'
@@ -1679,11 +1685,19 @@ function Accounts({
                 </button>
               </div>
               <h2>{a.name}</h2>
-              <strong className="detail-number">{money(a.balance, a.currency)}</strong>
+              {a.source === 'venmo' && a.balance == null ? (
+                <p className="muted">
+                  Balance not synced. Receipt forwarding tracks transactions, not your live Venmo
+                  balance.
+                </p>
+              ) : (
+                <strong className="detail-number">{money(a.balance, a.currency)}</strong>
+              )}
               <p className="muted tiny">
-                {a.source} · updated {new Date(a.updatedAt).toLocaleString()}
+                {a.source === 'venmo' ? 'Receipt forwarding' : a.source} · updated{' '}
+                {new Date(a.updatedAt).toLocaleString()}
               </p>
-              {new Date(a.updatedAt).getTime() < Date.now() - 4 * 864e5 && (
+              {a.balance != null && new Date(a.updatedAt).getTime() < Date.now() - 4 * 864e5 && (
                 <Status status="Stale balance" />
               )}
               <LineChart

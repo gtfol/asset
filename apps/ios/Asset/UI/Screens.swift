@@ -403,12 +403,13 @@ struct AccountsView: View {
                       VStack(alignment: .leading, spacing: 5) {
                         Text(a.text("name")).font(
                           .custom("Lato-Regular", size: 15, relativeTo: .subheadline))
-                        Text("\(a.text("source")) · \(a.text("mask",a.text("currency")))").font(
+                        Text("\(a.text("source") == "venmo" ? "Receipt forwarding" : a.text("source")) · \(a.text("mask",a.text("currency")))").font(
                           .custom("Lato-Regular", size: 12, relativeTo: .caption2)
                         ).foregroundStyle(Color.assetSecondary)
                       }
                       Spacer()
-                      Text(money(a.data["balance"], a.text("currency"))).font(
+                      Text(a.text("source") == "venmo" && a.missing("balance")
+                        ? "Receipts only" : money(a.data["balance"], a.text("currency"))).font(
                         .custom("Lato-Regular", size: 15, relativeTo: .subheadline)
                       ).monospacedDigit()
                     }.padding(.vertical, 8)
@@ -432,8 +433,15 @@ struct AccountDetail: View {
     ScrollView {
       VStack(spacing: 16) {
         Card {
-          Metric(title: a.text("name"), value: money(a.data["balance"], a.text("currency")))
-          Text("\(a.text("source")) · as of \(a.text("updatedAt"))").font(
+          if a.text("source") == "venmo" && a.missing("balance") {
+            Text(a.text("name")).font(.custom("Lato-Medium", size: 20, relativeTo: .title3))
+            Text("Balance not synced. Receipt forwarding tracks transactions, not your live Venmo balance.")
+              .font(.custom("Lato-Regular", size: 15, relativeTo: .subheadline))
+              .foregroundStyle(Color.assetSecondary)
+          } else {
+            Metric(title: a.text("name"), value: money(a.data["balance"], a.text("currency")))
+          }
+          Text("\(a.text("source") == "venmo" ? "Receipt forwarding" : a.text("source")) · as of \(a.text("updatedAt"))").font(
             .custom("Lato-Regular", size: 13, relativeTo: .caption)
           ).foregroundStyle(Color.assetSecondary)
           if !a.missing("loan") {

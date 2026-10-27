@@ -1,12 +1,18 @@
 # Verification record
 
+## October 27: Venmo receipt balance labels
+
+Venmo accounts without a balance now show **Receipts only** in account lists and the web sidebar. Account details explain that receipt forwarding tracks transactions without syncing the live Venmo balance. Missing balances no longer receive the web **Stale balance** badge. Other providers and known balances keep their existing display. No ingestion, balance calculation, or synchronization behavior changed.
+
+The production web build and unsigned iPhone simulator build pass. Native build 9 carries the same display changes. Apple Wallet authorization and authenticator enrollment still require the account owner's iPhone.
+
 ## October 26: refined Layers logo
 
 Applied the approved Layers design to the web favicon/header, native header, and iOS app icon. The three versions share tangent circular corners, a slim pale-blue lower stroke, and a diagonal blue gradient. The generated 1024px app icon is opaque with a square canvas for the system's corner mask; its colors explicitly use sRGB.
 
 The production web build, simulator build, signed archive, and diff whitespace checks pass. The icon's dimensions and lack of alpha were checked, and the actual web and iPhone headers were visually inspected. The web build used the previously verified clean source copy with the updated SVG; the JavaScript and CSS bundle hashes remain unchanged. No financial logic or records changed. Build **0.1.0 (8)** preserves the FinanceKit entitlement in both the app and signing profile.
 
-Commit `30e9087` passed GitHub Web checks (216 tests and production build) and deployed as `dpl_2DVb5VZ3uoF89umTV1EgkB5XqiwM`. The production `/icon.svg` response matches the approved source byte for byte. The installed simulator Home Screen icon was also visually checked. Build 8 uploaded successfully at **9:30 PM Pacific** on October 26; Apple reported that the package was processing. The existing missing LinkKit dSYM warning remains non-blocking. TestFlight availability is not yet confirmed because the App Store Connect browser session expired.
+Commit `30e9087` passed GitHub Web checks (216 tests and production build) and deployed as `dpl_2DVb5VZ3uoF89umTV1EgkB5XqiwM`. The production `/icon.svg` response matches the approved source byte for byte. The installed simulator Home Screen icon was also visually checked. Build 8 uploaded successfully at **9:30 PM Pacific** on October 26; Apple reported that the package was processing. The existing missing LinkKit dSYM warning remains non-blocking. On October 27, build 8 was confirmed **Testing** in the Internal group with one tester.
 
 Proof: [web header](screenshots/layers8-web-header.png), [iPhone header](screenshots/layers8-ios-header.png).
 
