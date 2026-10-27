@@ -20,12 +20,21 @@ export function appleSyncScope(input: z.infer<typeof appleBatchInput>): StateSco
     transactions: {
       providerIds: [...input.transactions.map((t) => t.providerId), ...input.deleted],
       amounts: [...new Set(input.transactions.map((t) => String(t.amount)))],
+      amountAccountId: input.accountId,
     },
     snapshots: {
       ids: balanceIDs,
       latestAppleBalance: { accountId: input.accountId, excluding: balanceIDs },
     },
   };
+}
+export function appleConnectScope(input: z.infer<typeof appleAccountInput>): StateScope {
+  // Linking only inspects accounts and the target's investment records.
+  // Transaction history stays in the database until individual sync batches need it.
+  return input.targetId ? {
+    holdings: { accountId: input.targetId },
+    investmentActivity: { accountId: input.targetId },
+  } : {};
 }
 export function appleRoutes(db: Database) {
   const router = Router();
@@ -90,6 +99,8 @@ export function appleRoutes(db: Database) {
       },
       undefined,
       true,
+      undefined,
+      appleConnectScope(input),
     );
     res.json({ revision: result.revision, accountId });
   });

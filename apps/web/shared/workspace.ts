@@ -53,9 +53,12 @@ export function workspaceChanges(before: State, after: State): Change[] {
   return changes;
 }
 export function assertWorkspaceChanges(state: State, changes: Change[]) {
+  const indexes = new Map<string, Map<string, unknown>>();
   for (const c of changes) {
+    if (c.collection !== 'settings' && c.collection !== 'preferences' && !indexes.has(c.collection))
+      indexes.set(c.collection, new Map((state[c.collection] as any[]).map(r => [keyFor(c.collection, r), r])));
     let current: any = c.collection === 'settings' ? state.settings : c.collection === 'preferences'
-      ? state.notifications?.preferences : (state[c.collection] as any[]).find(r => keyFor(c.collection, r) === c.key);
+      ? state.notifications?.preferences : indexes.get(c.collection)?.get(c.key);
     for (const key of c.field) current = current && Object.hasOwn(current, key) ? current[key] : undefined;
     if (!equal(value(current), c.before) && !equal(value(current), c.after))
       throw Object.assign(Error('This change overlaps an update from another device. Your local changes are saved; resolve them in Sync.'), { status: 409, code: 'SYNC_CONFLICT' });

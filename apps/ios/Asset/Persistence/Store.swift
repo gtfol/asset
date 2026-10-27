@@ -134,10 +134,11 @@ func money(_ value: Any?, _ currency: String = "USD") -> String {
   guard let value = value as? NSNumber else { return "Unavailable" }
   return (value.doubleValue / 100).formatted(.currency(code: currency))
 }
-func dateToday() -> String {
+func dateToday(timezone: String? = nil) -> String {
   let f = DateFormatter()
   f.dateFormat = "yyyy-MM-dd"
   f.locale = Locale(identifier: "en_US_POSIX")
+  if let timezone { f.timeZone = TimeZone(identifier: timezone) }
   return f.string(from: Date())
 }
 func isoNow() -> String { ISO8601DateFormatter().string(from: Date()) }
@@ -242,7 +243,8 @@ enum APIRequest {
   }
 }
 
-@MainActor final class Engine {
+// Each instance belongs to one serialized executor: the UI Store or its worker.
+final class Engine {
   private let context = JSContext()!
   private var exception: String?
   init() {
@@ -251,16 +253,32 @@ enum APIRequest {
       let source = try? String(contentsOf: url, encoding: .utf8)
     else { fatalError("Missing shared engine; run npm run native:resources") }
     context.evaluateScript(source)
+    context.evaluateScript("var assetInvokeJSON = function(name, args) { return JSON.stringify(AssetCore[name].apply(null, JSON.parse(args))); };")
   }
   func call(_ function: String, _ args: [Any] = []) throws -> Any {
     exception = nil
-    let value = context.objectForKeyedSubscript("AssetCore")?.objectForKeyedSubscript(function)?
-      .call(withArguments: args)
+    // JSON crosses the JavaScriptCore boundary in two strings instead of
+    // bridging every property of thousands of nested Foundation dictionaries.
+    let data = try JSONSerialization.data(withJSONObject: args)
+    let value = context.objectForKeyedSubscript("assetInvokeJSON")?
+      .call(withArguments: [function, String(decoding: data, as: UTF8.self)])
     if let exception { throw failure(exception) }
-    guard let result = value?.toObject() else {
+    guard let result = value?.toString(), let output = result.data(using: .utf8) else {
       throw failure("Calculation unavailable: \(function)")
     }
-    return result
+    return try JSONSerialization.jsonObject(with: output, options: [.fragmentsAllowed])
+  }
+}
+
+private struct PreparedWorkspace {
+  let document: JSON
+  let data: Data
+}
+private actor WorkspaceProcessor {
+  private lazy var engine = Engine()
+  func command(_ document: JSON, _ type: String, _ payload: JSON, _ id: String) throws -> PreparedWorkspace {
+    let next = try engine.call("localCommand", [document, ["type": type, "payload": payload], id]) as? JSON ?? [:]
+    return PreparedWorkspace(document: next, data: try JSONSerialization.data(withJSONObject: next))
   }
 }
 
@@ -310,6 +328,7 @@ enum SessionKey {
       cachedTransactions = nil
       cachedAccountsByID = nil
       cachedCategoriesByID = nil
+      cachedCalculations.removeAll()
     }
   }
   private(set) var stateGeneration = 0
@@ -318,6 +337,7 @@ enum SessionKey {
   private var cachedTransactions: [Row]?
   private var cachedAccountsByID: [String: Row]?
   private var cachedCategoriesByID: [String: Row]?
+  private var cachedCalculations: [String: Row] = [:]
   @Published var mode = ""
   @Published var error = ""
   @Published var verificationRequired = false
@@ -329,6 +349,8 @@ enum SessionKey {
   @Published var syncStatus = "Saved on this device"
   @Published var syncConflict = false
   private var document: JSON = [:]
+  private var documentGeneration = 0
+  private let processor = WorkspaceProcessor()
   private var syncing = false
   private let storageDirectory: URL?
   var pendingCount: Int { (document["pending"] as? [JSON] ?? []).count }
@@ -416,14 +438,15 @@ enum SessionKey {
     revision = document["revision"] as? Int ?? 0
     mode = owner == nil ? "private" : "remote"
   }
-  private func persistDocument(_ next: JSON) throws {
-    let data = try JSONSerialization.data(withJSONObject: next, options: [.sortedKeys])
+  private func persistDocument(_ next: JSON, encoded: Data? = nil) throws {
+    let data = try encoded ?? JSONSerialization.data(withJSONObject: next)
     #if os(iOS)
       try data.write(to: fileURL("workspace"), options: [.atomic, .completeFileProtection])
     #else
       try data.write(to: fileURL("workspace"), options: .atomic)
     #endif
     document = next
+    documentGeneration += 1
   }
   private func receive(_ result: JSON, acknowledged: String? = nil) throws {
     let args: [Any] = acknowledged.map { [document, result, $0] } ?? [document, result]
@@ -456,7 +479,16 @@ enum SessionKey {
     }
   }
   func calculation(_ name: String, _ args: [Any] = []) -> Row {
-    do { return Row(try engine.call(name, [state] + args) as? JSON ?? [:]) } catch {
+    do {
+      let data = try JSONSerialization.data(withJSONObject: args, options: [.sortedKeys])
+      // Date-sensitive summaries must expire at midnight even without new data.
+      let key = name + "|" + dateToday(timezone: row.object("settings").text("timezone")) + "|" + String(decoding: data, as: UTF8.self)
+      if let result = cachedCalculations[key] { return result }
+      let result = Row(try engine.call(name, [state] + args) as? JSON ?? [:])
+      if cachedCalculations.count >= 64 { cachedCalculations.removeAll() }
+      cachedCalculations[key] = result
+      return result
+    } catch {
       return Row(["error": error.localizedDescription])
     }
   }
@@ -488,7 +520,9 @@ enum SessionKey {
     let token = SessionKey.read()
     do {
       let known: JSON = ["owner": owner as Any? ?? NSNull(), "revision": revision]
-      let path = try engine.call("workspaceSyncPath", [document]) as? String ?? "/state"
+      let deltaReady = document["base"] as? JSON != nil || pendingCount == 0
+      let path = owner != nil && owner != "legacy"
+        ? "/state?ownerId=\(owner!)&revision=\(revision)\(deltaReady ? "&delta=1" : "")" : "/state"
       let r = try await request(path, token: token)
       guard generation == workspaceGeneration, token == SessionKey.read() else { return }
       let unchanged = try engine.call("workspaceUnchanged", [known, r]) as? Bool == true
@@ -513,7 +547,7 @@ enum SessionKey {
       configured = r["plaidConfigured"] as? Bool ?? false
       while let operation = (document["pending"] as? [JSON])?.first {
         var body: JSON = ["ownerId": remoteOwner, "operation": operation]
-        if try engine.call("workspaceDeltaReady", [document]) as? Bool == true {
+        if document["base"] as? JSON != nil || pendingCount == 0 {
           body["revision"] = revision; body["delta"] = true
         }
         let result = try await request("/sync/command", body: body)
@@ -600,8 +634,18 @@ enum SessionKey {
       try receive(r)
       return
     }
-    let next = try engine.call("localCommand", [document, ["type": type, "payload": payload], uid()]) as? JSON ?? [:]
-    try persistDocument(next); publishDocument()
+    let generation = workspaceGeneration, operationID = uid()
+    while true {
+      let version = documentGeneration
+      let prepared = try await processor.command(document, type, payload, operationID)
+      guard generation == workspaceGeneration else { throw failure("Workspace changed while saving") }
+      // A sync may finish while the worker runs. Reapply to its confirmed state
+      // instead of overwriting the update or saving an operation for another user.
+      guard version == documentGeneration else { continue }
+      try persistDocument(prepared.document, encoded: prepared.data)
+      publishDocument()
+      break
+    }
     syncStatus = owner == nil ? "Saved on this device" : "Changes saved · syncing"
     if mode == "remote" { Task { await refresh() } }
   }

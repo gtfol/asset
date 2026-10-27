@@ -564,18 +564,20 @@ function applyFinancialCommand(input: State, command: Command, now: string): Sta
       break;
     }
     case 'transactions.review': {
-      const ids = z.array(z.string()).max(10000).parse(p.ids);
-      if (ids.some((id) => !s.transactions.some((t) => t.id === id && !t.removed)))
+      const ids = new Set(z.array(z.string()).max(10000).parse(p.ids));
+      const reviewed = z.boolean().parse(p.reviewed);
+      const available = new Set(s.transactions.filter((t) => !t.removed).map((t) => t.id));
+      if ([...ids].some((id) => !available.has(id)))
         throw Error('Selection contains unavailable transactions');
       if (
-        p.reviewed === true &&
-        s.transactions.some((t) => ids.includes(t.id) && t.raw?.asset_split_conflict === true)
+        reviewed &&
+        s.transactions.some((t) => ids.has(t.id) && t.raw?.asset_split_conflict === true)
       )
         throw Error(
           'Open the changed transaction and reconcile its splits before reviewing this selection',
         );
       for (const t of s.transactions)
-        if (ids.includes(t.id)) t.reviewed = z.boolean().parse(p.reviewed);
+        if (ids.has(t.id)) t.reviewed = reviewed;
       break;
     }
     case 'category.save': {

@@ -494,7 +494,7 @@ private enum NativeStoreTests {
     print(
       String(
         format:
-          "TIMING 25,000 rows (macOS, optimized build): materialize %.2fms; 1,000 cached row reads %.2fms; first page %.2fms; filtered page %.2fms; first Dashboard %.2fms; 5 repeated uncached Dashboards %.2fms.",
+          "TIMING 25,000 rows (macOS, optimized build): materialize %.2fms; 1,000 cached row reads %.2fms; first page %.2fms; filtered page %.2fms; first Dashboard %.2fms; 5 cached Dashboards %.2fms.",
         materialize, warmRows, firstPage, search, calculation, repeatedCalculations))
     print(
       "Timings describe Store computation on this machine; they do not measure simulator rendering or scrolling frame rate."

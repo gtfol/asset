@@ -33,7 +33,7 @@ import SwiftUI
     }
     return NSDecimalNumber(decimal: rounded).intValue
   }
-  func sync(store: Store) async {
+  func sync(store: Store, accountID selectedAccountID: String? = nil) async {
     guard Self.enabled, !working, store.mode == "remote", !store.isDemo, !store.verificationRequired else { return }
     working = true; message = ""; defer { working = false }
     guard let token = SessionKey.read(), let owner = store.owner else { return }
@@ -48,7 +48,10 @@ import SwiftUI
       let configuration = try await store.request("/apple", server: server, token: token)
       try current()
       guard configuration["available"] as? Bool == true else { return }
-      let linked = (configuration["accounts"] as? [JSON] ?? []).filter { ($0["financekit"] as? JSON)?["deviceId"] as? String == Self.deviceID }
+      let linked = (configuration["accounts"] as? [JSON] ?? []).filter {
+        ($0["financekit"] as? JSON)?["deviceId"] as? String == Self.deviceID
+          && (selectedAccountID == nil || $0["id"] as? String == selectedAccountID)
+      }
       guard !linked.isEmpty else { return }
       guard try await FinanceStore.shared.authorizationStatus() == .authorized else {
         message = "Apple access is paused. Reconnect in Apple accounts or remove the synced data."
@@ -62,6 +65,9 @@ import SwiftUI
         try current()
         guard let accountID = account["id"] as? String, let provider = account["providerId"] as? String,
           let id = UUID(uuidString: provider) else { continue }
+        let name = account["name"] as? String ?? "Apple account"
+        var transactionCount = 0
+        message = "Updating \(name) balance…"
         let path = try checkpointURL(server + "|" + owner + "|" + accountID + "|" + ((account["financekit"] as? JSON)?["consentAt"] as? String ?? ""))
         var checkpoint = (try? JSONDecoder().decode(Checkpoint.self, from: Data(contentsOf: path))) ?? Checkpoint()
         var sequence = (account["financekit"] as? JSON)?["sequence"] as? Int ?? 0
@@ -74,6 +80,22 @@ import SwiftUI
         }
         // Checkpoint only after every chunk has reached the server. A crash replays IDs safely.
         do {
+          for try await changes in FinanceStore.shared.accountBalanceHistory(forAccountID: id, since: checkpoint.balances, isMonitoring: false) {
+            // Available credit is not debt. Use only the booked balance for liabilities.
+            let rows = try (changes.inserted + changes.updated).compactMap { (record: FinanceKit.AccountBalance) -> JSON? in
+              let liability = account["type"] as? String == "credit"
+              guard let balance = record.booked ?? (liability ? nil : record.available) else { return nil }
+              let sign = (balance.creditDebitIndicator == .debit) == liability ? 1 : -1
+              return ["providerId": record.id.uuidString.lowercased(), "date": formatter.string(from: balance.asOfDate),
+                "asOf": ISO8601DateFormatter().string(from: balance.asOfDate),
+                "balance": abs(try Self.cents(balance.amount)) * sign, "currency": balance.amount.currencyCode]
+            }
+            for start in stride(from: 0, to: rows.count, by: 500) { try await send(balances: Array(rows[start..<min(start+500,rows.count)])) }
+            for start in stride(from: 0, to: changes.deleted.count, by: 500) { try await send(deletedBalances: Array(changes.deleted[start..<min(start+500,changes.deleted.count)])) }
+            try current(); checkpoint.balances = changes.newToken
+            try JSONEncoder().encode(checkpoint).write(to: path, options: [.atomic, .completeFileProtection])
+          }
+          message = "Reading \(name) transactions…"
           for try await changes in FinanceStore.shared.transactionHistory(forAccountID: id, since: checkpoint.transactions, isMonitoring: false) {
             let all = changes.inserted + changes.updated
             let rows = try all.filter { $0.status != .rejected }.map { (transaction: FinanceKit.Transaction) -> JSON in
@@ -93,25 +115,15 @@ import SwiftUI
                 "amount": abs(try Self.cents(transaction.transactionAmount)), "currency": transaction.transactionAmount.currencyCode,
                 "direction": credit ? "credit" : "debit", "type": kind, "pending": transaction.status != .booked]
             }
-            for start in stride(from: 0, to: rows.count, by: 500) { try await send(Array(rows[start..<min(start+500,rows.count)])) }
+            for start in stride(from: 0, to: rows.count, by: 500) {
+              let chunk = Array(rows[start..<min(start+500,rows.count)])
+              try await send(chunk)
+              transactionCount += chunk.count
+              message = "Syncing \(name) · \(transactionCount) transactions"
+            }
             let removed = changes.deleted + all.filter { $0.status == .rejected }.map(\.id)
             for start in stride(from: 0, to: removed.count, by: 500) { try await send(deleted: Array(removed[start..<min(start+500,removed.count)])) }
             try current(); checkpoint.transactions = changes.newToken
-            try JSONEncoder().encode(checkpoint).write(to: path, options: [.atomic, .completeFileProtection])
-          }
-          for try await changes in FinanceStore.shared.accountBalanceHistory(forAccountID: id, since: checkpoint.balances, isMonitoring: false) {
-            // Available credit is not debt. Use only the booked balance for liabilities.
-            let rows = try (changes.inserted + changes.updated).compactMap { (record: FinanceKit.AccountBalance) -> JSON? in
-              let liability = account["type"] as? String == "credit"
-              guard let balance = record.booked ?? (liability ? nil : record.available) else { return nil }
-              let sign = (balance.creditDebitIndicator == .debit) == liability ? 1 : -1
-              return ["providerId": record.id.uuidString.lowercased(), "date": formatter.string(from: balance.asOfDate),
-                "asOf": ISO8601DateFormatter().string(from: balance.asOfDate),
-                "balance": abs(try Self.cents(balance.amount)) * sign, "currency": balance.amount.currencyCode]
-            }
-            for start in stride(from: 0, to: rows.count, by: 500) { try await send(balances: Array(rows[start..<min(start+500,rows.count)])) }
-            for start in stride(from: 0, to: changes.deleted.count, by: 500) { try await send(deletedBalances: Array(changes.deleted[start..<min(start+500,changes.deleted.count)])) }
-            try current(); checkpoint.balances = changes.newToken
             try JSONEncoder().encode(checkpoint).write(to: path, options: [.atomic, .completeFileProtection])
           }
         } catch FinanceError.historyTokenInvalid {
@@ -153,6 +165,9 @@ struct AppleAccountsView: View {
           Text("Apple account syncing is not available right now.").foregroundStyle(Color.assetSecondary)
         }
       }
+      if working || sync.working {
+        Section { ProgressView(sync.working ? (sync.message.isEmpty ? "Syncing Apple accounts…" : sync.message) : "Updating Apple accounts…") }
+      }
       if available && !secured {
         Section { NavigationLink("Set up authenticator") { DeviceVerificationView(enrollment: true, onVerified: { Task { await load() } }) } }
       }
@@ -185,8 +200,10 @@ struct AppleAccountsView: View {
               var body: JSON = ["providerId": account.id.uuidString.lowercased(), "deviceId": AppleAccountSync.deviceID,
                 "name": account.displayName, "type": type, "currency": account.currencyCode, "consent": consent]
               if let target = targets[account.id], !target.isEmpty { body["targetId"] = target }
-              _ = try await context.request(store, "/apple/connect", body: body)
-              await store.refresh(); try context.check(store); await sync.sync(store: store); try context.check(store); await load()
+              let linked = try await context.request(store, "/apple/connect", body: body)
+              try context.check(store)
+              await sync.sync(store: store, accountID: linked["accountId"] as? String)
+              try context.check(store); await load()
             } }.disabled(!consent || account.currencyCode != "USD")
           }
         }
@@ -199,7 +216,7 @@ struct AppleAccountsView: View {
       }
       if available { Button(sync.working ? "Syncing…" : "Sync Apple accounts") { Task { await sync.sync(store: store) } }.disabled(sync.working) }
       if !message.isEmpty { Text(message).foregroundStyle(Color.assetSecondary) }
-      if !sync.message.isEmpty { Text(sync.message).foregroundStyle(Color.assetSecondary) }
+      if !sync.working && !sync.message.isEmpty { Text(sync.message).foregroundStyle(Color.assetSecondary) }
     }.disabled(working || sync.working).assetTitle("Apple accounts")
       .font(.custom("Lato-Regular", size: 15, relativeTo: .subheadline))
       .listStyle(.plain).scrollContentBackground(.hidden).background(Color.assetBackground)

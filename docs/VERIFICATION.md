@@ -1,5 +1,13 @@
 # Verification record
 
+## October 27: review, loading, and Apple sync performance
+
+Native commands now prepare changes and serialize the saved document on a dedicated actor, keeping the main UI thread available. Before committing, the Store verifies the workspace identity and document generation; a concurrent sync causes the command to be recalculated against the newer document. The final local save remains atomic. JavaScriptCore uses a JSON string boundary instead of bridging every nested Foundation property. Sync-path checks inspect only small metadata, saved documents no longer sort every key, and calculation results are cached until the state or workspace reporting date changes. Web startup no longer rewrites an unchanged saved workspace.
+
+Bulk review uses indexed membership checks, and sync conflict checks index affected collections once. These changes preserve the existing whole-record conflict checks, review validation, categories, and user edits. Apple connection setup now selects only accounts and the target's investment records. Subsequent receipt matching limits amount candidates to the connected account and indexes them by amount. Initial iPhone sync reads balances first, displays account/progress messages, and connects only the chosen account rather than refreshing every Apple account again. Successful authenticator enrollment now dismisses its setup screen immediately after verification, before refreshing the workspace.
+
+The web production build and **217 web tests** pass: 206 passed in the initial clean-copy run, and the 11 deployment tests passed after restoring the omitted API adapter to that copy. All **112 native Store/API checks** pass. A synthetic 6,000-transaction / 13.6 MB document benchmark fell from **3,864 ms to 1,269 ms** for preparing a bulk review through JavaScriptCore. This excludes disk writes and network latency. In the 25,000-row native harness, five cached Dashboard reads took **0.59 ms** after an initial **330 ms** calculation. These are optimized macOS computation results, not physical-iPhone end-to-end timings. Apple connection and sync tests verify bounded database results and preserved unrelated history, including other accounts with the same transaction amounts.
+
 ## October 27: Venmo receipt balance labels
 
 Venmo accounts without a balance now show **Receipts only** in account lists and the web sidebar. Account details explain that receipt forwarding tracks transactions without syncing the live Venmo balance. Missing balances no longer receive the web **Stale balance** badge. Other providers and known balances keep their existing display. No ingestion, balance calculation, or synchronization behavior changed.

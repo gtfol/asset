@@ -7,6 +7,7 @@ export type RecordFilter = {
   all?: boolean;
   ids?: string[];
   amounts?: string[];
+  amountAccountId?: string;
   recurring?: boolean;
   provider?: { connectionId: string; ids: string[] };
   providerIds?: string[];
@@ -30,7 +31,7 @@ export function scopedStateSQL(): string {
       ORDER BY COALESCE(b->>'asOf',b->>'date') DESC LIMIT 1) ELSE false END` : '';
     const predicate = `COALESCE((${f}->>'all')::boolean,false)
       OR (${f}->'ids') ? (${r}->>'id')
-      OR (${f}->'amounts') ? (${r}->>'amount')
+      OR ((${f}->'amounts') ? (${r}->>'amount') AND (${f}->>'amountAccountId' IS NULL OR ${r}->>'accountId'=${f}->>'amountAccountId'))
       OR (${f}->'providerIds') ? (${r}->>'providerId')
       OR (COALESCE((${f}->>'recurring')::boolean,false) AND COALESCE(${r}#>>'{edits,recurring}',${r}->>'recurring','')<>'')
       OR (${r}->>'connectionId'=${f}#>>'{provider,connectionId}' AND (${f}#>'{provider,ids}') ? (${r}->>'providerId'))

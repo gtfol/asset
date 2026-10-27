@@ -284,6 +284,35 @@ describe('Statement-based loan records', () => {
 });
 
 describe('Apple sync bandwidth and balance history', () => {
+  it('connects an imported account without loading its transaction history', async () => {
+    const { getState, mutateState } = await import('../server/db');
+    const { appleConnectScope } = await import('../server/apple');
+    vi.stubEnv('DATABASE_URL', undefined);
+    vi.stubEnv('VERCEL', undefined);
+    const db = await openDatabase(':memory:');
+    try {
+      const state = fixture();
+      state.transactions = Array.from({ length: 2500 }, (_, i) =>
+        transaction(`history-${i}`, 700, { notes: 'Saved history '.repeat(70) }));
+      await db.query('INSERT INTO users(id,email) VALUES($1,$2)', ['connect-owner', 'connect@example.invalid']);
+      await db.query('INSERT INTO workspaces(owner_id,state) VALUES($1,$2)', ['connect-owner', JSON.stringify(state)]);
+      let bytes = 0;
+      const wrap = (sql: any): any => ({ query: async (query: string, params?: unknown[]) => {
+        const result = await sql.query(query, params); bytes += Buffer.byteLength(JSON.stringify(result.rows)); return result;
+      } });
+      const measured = { ...wrap(db), transaction: (fn: any) => db.transaction(tx => fn(wrap(tx))), close: () => db.close() } as Database;
+      await mutateState(measured, 'connect-owner', s => {
+        expect(s.transactions).toHaveLength(0);
+        connectAppleAccount(s, account, now);
+        return s;
+      }, undefined, true, undefined, appleConnectScope(account));
+      expect(bytes).toBeLessThan(15000);
+      const stored = (await getState(db, 'connect-owner')).state;
+      expect(stored.accounts[0].source).toBe('financekit');
+      expect(stored.transactions).toEqual(state.transactions);
+      console.info('Apple connect database bytes', bytes);
+    } finally { await db.close(); vi.unstubAllEnvs(); }
+  });
   it('loads only changed transactions and balance candidates, preserving the complete ledger', async () => {
     const { getState, mutateState } = await import('../server/db');
     const { appleSyncScope } = await import('../server/apple');
@@ -292,8 +321,9 @@ describe('Apple sync bandwidth and balance history', () => {
     const db = await openDatabase(':memory:');
     try {
       const s = fixture();
+      s.accounts.push({ ...s.accounts[0], id: 'another-account' });
       s.transactions = Array.from({ length: 4000 }, (_, i) =>
-        transaction(`unrelated-${i}`, 999, { notes: 'Original history '.repeat(40) }),
+        transaction(`unrelated-${i}`, 700, { accountId: 'another-account', notes: 'Original history '.repeat(40) }),
       );
       s.transactions.push(
         transaction('imported', 700, {

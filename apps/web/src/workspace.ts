@@ -49,8 +49,10 @@ export class Workspace {
     await this.lock('storage', async () => {
     const active = await this.storage.read('active');
     const saved = await this.storage.read(typeof active === 'string' ? active : 'guest');
-    this.doc = saved ? validateLocalWorkspace(saved) : createLocalWorkspace(crypto.randomUUID());
-    await this.save(this.doc);
+    if (saved) {
+      this.doc = validateLocalWorkspace(saved);
+      this.changed();
+    } else await this.save(createLocalWorkspace(crypto.randomUUID()));
     });
   }
   private lock<T>(name: string, action: () => Promise<T>) { return this.storage.lock ? this.storage.lock(name, action) : action(); }

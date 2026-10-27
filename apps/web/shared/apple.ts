@@ -122,15 +122,23 @@ export function applyAppleBatch(
   if (input.sequence !== connection.sequence + 1)
     throw Error('Apple sync changed. Refresh and try again.');
   const seen = new Set<string>();
+  const deletedTransactions = new Set(input.deleted);
+  const existingByProvider = new Map(state.transactions
+    .filter(t => t.accountId === account.id && t.source === 'financekit' && t.providerId)
+    .map(t => [t.providerId!, t]));
+  const candidatesByAmount = new Map<number, Transaction[]>();
+  for (const t of state.transactions) {
+    if (t.accountId !== account.id || t.currency !== account.currency) continue;
+    const candidates = candidatesByAmount.get(t.amount) ?? [];
+    candidates.push(t);
+    candidatesByAmount.set(t.amount, candidates);
+  }
   for (const t of input.transactions) {
-    if (seen.has(t.providerId) || input.deleted.includes(t.providerId))
+    if (seen.has(t.providerId) || deletedTransactions.has(t.providerId))
       throw Error('Duplicate Apple transaction change.');
     seen.add(t.providerId);
     if (t.currency !== account.currency) throw Error('Apple transaction currency does not match.');
-    const previous = state.transactions.find(
-      (x) =>
-        x.accountId === account.id && x.source === 'financekit' && x.providerId === t.providerId,
-    );
+    const previous = existingByProvider.get(t.providerId);
     const provider = applyRules(
       transactionSchema.parse({
         id: `apple-${account.id}-${t.providerId}`,
@@ -152,7 +160,7 @@ export function applyAppleBatch(
       state,
     );
     const imported =
-      previous || provider.pending ? undefined : importedMatch(state.transactions, provider);
+      previous || provider.pending ? undefined : importedMatch(candidatesByAmount.get(t.amount) ?? [], provider);
     if (previous)
       Object.assign(previous, provider, {
         id: previous.id,
@@ -177,9 +185,7 @@ export function applyAppleBatch(
     else state.transactions.push(provider);
   }
   for (const id of input.deleted) {
-    const t = state.transactions.find(
-      (t) => t.accountId === account.id && t.source === 'financekit' && t.providerId === id,
-    );
+    const t = existingByProvider.get(id);
     if (t) t.removed = true;
   }
   const seenBalances = new Set<string>();

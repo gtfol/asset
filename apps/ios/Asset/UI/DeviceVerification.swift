@@ -2,6 +2,7 @@ import SwiftUI
 
 struct DeviceVerificationView: View {
   @EnvironmentObject var store: Store
+  @Environment(\.dismiss) private var dismiss
   var enrollment = false
   var onVerified: () -> Void = {}
   @State private var setup: JSON?
@@ -37,8 +38,9 @@ struct DeviceVerificationView: View {
           Button(working ? "Verifying…" : "Verify device") { perform { context in
             _ = try await context.request(store, "/security/verify", body: ["code": code])
             store.verificationRequired = false
-            await store.refresh()
             onVerified()
+            if enrollment { dismiss() }
+            await store.refresh()
           } }.disabled(code.count < 6 || (enrollment && !savedRecovery))
         }
       }
