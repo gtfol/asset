@@ -47,6 +47,8 @@ private enum NativeStoreTests {
     try expect(!demo.isEmpty, "Production calculation engine must load from the temporary bundle")
     try checkGoogleSignIn()
     try checkAppLock()
+    try await checkBackgroundSync()
+    try await checkBackgroundReceive(demo: demo)
     try checkPlaidLifecycle()
     try checkAPIRequests()
     try checkConditionalSync(store: store)
@@ -57,6 +59,108 @@ private enum NativeStoreTests {
     print(
       "PASS: \(checks) native sign-in, Plaid lifecycle, API requests, Store identity, filtering, paging, and cache invalidation checks."
     )
+  }
+
+  private static func eventually(_ condition: @MainActor () -> Bool) async throws {
+    let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+    while !condition() && ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }
+    try expect(condition(), "Async operation reaches its expected state")
+  }
+
+  private static func checkBackgroundSync() async throws {
+    let queue = BackgroundSyncQueue(idleTimeout: .milliseconds(80))
+    var stalled: CheckedContinuation<Void, Never>?
+    var lateWrite = false, cardRan = false, duplicateRan = false
+    queue.enqueue(key: "cash", label: "Apple Cash") { progress in
+      await withCheckedContinuation { stalled = $0 }
+      try progress.check()
+      lateWrite = true
+    }
+    queue.enqueue(key: "cash", label: "Duplicate") { _ in duplicateRan = true }
+    queue.enqueue(key: "card", label: "Apple Card", priority: true) { progress in
+      try progress.report("Saving Apple Card")
+      cardRan = true
+    }
+    try await eventually { stalled != nil }
+    try expect(queue.working && !cardRan, "A second account queues without overlapping the current sync")
+    try await eventually { cardRan && !queue.working }
+    try expect(queue.failures["cash"] != nil, "A stalled account gives a retryable error")
+    try expect(!duplicateRan, "Repeated foreground requests do not duplicate an active account")
+    stalled?.resume(); stalled = nil
+    try await Task.sleep(for: .milliseconds(10))
+    try expect(!lateWrite && !queue.working, "A provider that ignores cancellation cannot save or finish a later sync")
+    queue.enqueue(key: "cash", label: "Apple Cash") { progress in
+      for _ in 0..<8 {
+        try await Task.sleep(for: .milliseconds(20))
+        try progress.report("Saved another page")
+      }
+    }
+    try await eventually { !queue.working }
+    try expect(queue.failures.isEmpty, "Active progress extends the deadline and retry clears its error")
+
+    var cancelled: CheckedContinuation<Void, Never>?
+    var pendingRan = false
+    queue.enqueue(key: "stop", label: "Stopped account") { progress in
+      await withCheckedContinuation { cancelled = $0 }
+      try progress.check()
+      lateWrite = true
+    }
+    queue.enqueue(key: "pending", label: "Queued account") { _ in pendingRan = true }
+    try await eventually { cancelled != nil }
+    queue.stop()
+    try expect(!queue.working, "Stop releases the screen immediately")
+    var retry: CheckedContinuation<Void, Never>?
+    queue.enqueue(key: "retry", label: "Retry") { progress in
+      await withCheckedContinuation { retry = $0 }
+      try progress.check()
+    }
+    try await eventually { retry != nil }
+    cancelled?.resume(); cancelled = nil
+    try await Task.sleep(for: .milliseconds(10))
+    try expect(queue.activeKey == "retry" && !lateWrite && !pendingRan, "Stopped work cannot finish the retry or run its old queue")
+    retry?.resume(); retry = nil
+    try await eventually { !queue.working }
+  }
+
+  private static func checkBackgroundReceive(demo: JSON) async throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    let engine = Engine()
+    var state = demo
+    let template = (state["transactions"] as! [JSON])[0]
+    let rows = (0..<6_000).map { index -> JSON in
+      var row = template; row["id"] = "perf-\(index)"; row["reviewed"] = false; row["edits"] = JSON(); return row
+    }
+    state["transactions"] = rows
+    var document = try engine.call("createLocalWorkspace", [uid()]) as! JSON
+    document["owner"] = "synthetic-owner"; document["state"] = state
+    document = try engine.call("localCommand", [document,
+      ["type": "transactions.review", "payload": ["ids": ["perf-0"], "reviewed": true]], uid()]) as! JSON
+    try JSONSerialization.data(withJSONObject: document).write(to: directory.appendingPathComponent("workspace.json"))
+    let store = Store(directory: directory)
+    try expect(store.error.isEmpty, "Saved regression fixture is valid: \(store.error)")
+    var remote = state
+    var incoming = rows; var newRow = template; newRow["id"] = "new-bank-row"; incoming.append(newRow)
+    remote["transactions"] = incoming
+    var ticks = 0
+    let responsiveness = Task { @MainActor in
+      while !Task.isCancelled { ticks += 1; try? await Task.sleep(for: .milliseconds(1)) }
+    }
+    try await store.receive(["revision": 1, "state": remote])
+    responsiveness.cancel(); await responsiveness.value
+    try expect(ticks > 0, "Main actor remains available while downloaded history is merged and encoded")
+    try expect(store.transactions.contains { $0.id == "new-bank-row" }, "Downloaded bank records are retained")
+    try expect(store.transactions.first { $0.id == "perf-0" }?.flag("reviewed") == true, "Unsynced review is replayed over downloaded history")
+    try expect(store.pendingCount == 1, "Receiving a bank update does not acknowledge an unsent edit")
+    try await store.receive(["revision": 0, "state": state])
+    try expect(store.revision == 1 && store.transactions.count == 6_001, "A late older snapshot cannot replace newer history")
+    var staleAckRejected = false
+    do { try await store.receive(["revision": 0, "state": state], acknowledged: "stale") } catch { staleAckRejected = true }
+    try expect(staleAckRejected && store.pendingCount == 1, "A stale acknowledgement preserves edits for retry")
+    let reopened = Store(directory: directory)
+    try expect(reopened.revision == 1 && reopened.transactions.count == 6_001, "Background merge is persisted atomically")
+    print("TIMING responsiveness during a 6,000-row receive: \(ticks) main-actor ticks.")
   }
 
   private static func checkConditionalSync(store: Store) throws {

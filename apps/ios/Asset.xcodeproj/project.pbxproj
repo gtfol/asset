@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		F38231A00101010101010001 /* BackgroundSync.swift in Sources */ = {isa = PBXBuildFile; fileRef = F38231A00101010101010002 /* BackgroundSync.swift */; };
 		0715543FA1CB7B4924479B705B0A2F00 /* GoogleAuthentication.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2294CCFC45BC5BEEE4D99804C88B88FD /* GoogleAuthentication.swift */; };
 		207DB3BB8CAEE66FC35BB08131ABFA8E /* Screens.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5323C1F7BCD95A4FAF8C3026C7C7ACBA /* Screens.swift */; };
 		214AC44BF87266ACA35DB2F7E90E8D19 /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D338126F8F35BDD60C8D8069B061CB2A /* RootView.swift */; };
@@ -29,6 +30,7 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		F38231A00101010101010002 /* BackgroundSync.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackgroundSync.swift; sourceTree = "<group>"; };
 		031140C16294615DA764A41B039AD5B7 /* DeviceVerification.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = DeviceVerification.swift; sourceTree = "<group>"; };
 		148F375B1AEDEE95A2C945C09744803B /* AssetApp.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AssetApp.swift; sourceTree = "<group>"; };
 		19E6DF579B55258A641C225B6B378314 /* Store.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = Store.swift; sourceTree = "<group>"; };
@@ -123,6 +125,7 @@
 			isa = PBXGroup;
 			children = (
 				19E6DF579B55258A641C225B6B378314 /* Store.swift */,
+				F38231A00101010101010002 /* BackgroundSync.swift */,
 			);
 			name = Persistence;
 			path = Persistence;
@@ -237,6 +240,7 @@
 				9F56E5A826CE46B36D0AF9BC3CFBB797 /* Settings.swift in Sources */,
 				DEACBC34900E0A757D267A7295A13E6D /* Venmo.swift in Sources */,
 				D39A953D895BB79DBABAC414A9E112DC /* Store.swift in Sources */,
+				F38231A00101010101010001 /* BackgroundSync.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

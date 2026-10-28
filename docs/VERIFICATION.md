@@ -1,5 +1,15 @@
 # Verification record
 
+## October 28: responsive Apple setup and background sync
+
+Apple account setup no longer disables its entire list during an existing sync. Connecting an account queues its history independently of the setup form; linked accounts appear from the lightweight connection response, without waiting for the complete history download. The sync queue serializes accounts, prioritizes newly connected accounts, deduplicates requests, and advances past a stalled account after 60 seconds without progress. Stop cancels immediately, clears queued work, and retains acknowledged checkpoints. Every resumed provider callback checks a per-run cancellation fence before sending records or saving a checkpoint. Foreground requests are limited to once per five minutes, and changing workspaces clears queued work and account-specific messages.
+
+Download merging, pending-edit replay, document encoding, request encoding/decoding, and FinanceKit row mapping now run away from the main UI executor. Document-generation checks reapply downloaded updates against concurrent local changes; older snapshots cannot replace a newer revision, and stale acknowledgements retain pending edits for retry. Existing delta sync and server conflict checks remain in place.
+
+All **133 native regression checks** pass, including stalled-provider recovery, queued Apple Card after stalled Apple Cash, duplicate prevention, progress deadline renewal, immediate cancellation, late callbacks after retry, and a 6,000-row downloaded history merge that preserves an unsynced review and leaves the main actor available. These synthetic checks do not measure physical-iPhone sync speed. The iOS simulator build and signed **0.1.0 (10)** archive pass. A separate simulator-only fixture using the production setup view verified that consent and Choose Apple accounts stay enabled during a stalled sync, Stop restores idle controls immediately, and Done dismisses the sheet. No production financial records were changed. Actual Wallet authorization and Apple Card sync still require the owner's iPhone.
+
+TestFlight upload is in progress from the final responsive-setup archive. App Store Connect's browser session expired; the owner has been asked to sign back in for distribution verification.
+
 ## October 27: review, loading, and Apple sync performance
 
 Native commands now prepare changes and serialize the saved document on a dedicated actor, keeping the main UI thread available. Before committing, the Store verifies the workspace identity and document generation; a concurrent sync causes the command to be recalculated against the newer document. The final local save remains atomic. JavaScriptCore uses a JSON string boundary instead of bridging every nested Foundation property. Sync-path checks inspect only small metadata, saved documents no longer sort every key, and calculation results are cached until the state or workspace reporting date changes. Web startup no longer rewrites an unchanged saved workspace.

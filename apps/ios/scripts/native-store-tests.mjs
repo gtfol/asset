@@ -23,6 +23,7 @@ try {
       '-swift-version',
       '5',
       join(nativeRoot, 'Asset/Persistence/Store.swift'),
+      join(nativeRoot, 'Asset/Persistence/BackgroundSync.swift'),
       join(nativeRoot, 'AssetTests/NativeStoreTests.swift'),
       '-o',
       executable,

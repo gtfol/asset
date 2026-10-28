@@ -268,8 +268,9 @@ private struct PrivateAppRoot: View {
       .accessibilityHidden(privacy.hidden)
       .background(PrivacyWindowAnchor(privacy: privacy).frame(width: 0, height: 0))
       .onChange(of: privacy.hidden) { _, hidden in
-        if !hidden { Task { await AppleAccountSync.shared.sync(store: store) } }
+        if !hidden { AppleAccountSync.shared.sync(store: store, automatic: true) }
       }
+      .onChange(of: store.workspaceGeneration) { _, _ in AppleAccountSync.shared.reset() }
       .onChange(of: protected, initial: true) { _, value in privacy.configure(protected: value) }
   }
 }

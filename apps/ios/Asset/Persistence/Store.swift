@@ -280,6 +280,22 @@ private actor WorkspaceProcessor {
     let next = try engine.call("localCommand", [document, ["type": type, "payload": payload], id]) as? JSON ?? [:]
     return PreparedWorkspace(document: next, data: try JSONSerialization.data(withJSONObject: next))
   }
+  func receive(_ document: JSON, _ result: JSON, _ acknowledged: String?) throws -> PreparedWorkspace {
+    let args: [Any] = acknowledged.map { [document, result, $0] } ?? [document, result]
+    let next = try engine.call("receiveWorkspace", args) as? JSON ?? [:]
+    return PreparedWorkspace(document: next, data: try JSONSerialization.data(withJSONObject: next))
+  }
+}
+
+private enum WorkspaceTransport {
+  // Encoding outgoing edits and decoding downloaded history must not block gestures.
+  static func request(_ path: String, body: JSON?, server: String, token: String?,
+    method: String?, session: URLSession) async throws -> (JSON, Int) {
+    let request = try APIRequest.make(path, body: body, server: server, token: token, method: method)
+    let (data, response) = try await session.data(for: request)
+    let result = try JSONSerialization.jsonObject(with: data) as? JSON ?? [:]
+    return (result, (response as? HTTPURLResponse)?.statusCode ?? 0)
+  }
 }
 
 enum SessionKey {
@@ -448,11 +464,24 @@ enum SessionKey {
     document = next
     documentGeneration += 1
   }
-  private func receive(_ result: JSON, acknowledged: String? = nil) throws {
-    let args: [Any] = acknowledged.map { [document, result, $0] } ?? [document, result]
-    let next = try engine.call("receiveWorkspace", args) as? JSON ?? [:]
-    try persistDocument(next)
-    publishDocument()
+  func receive(_ result: JSON, acknowledged: String? = nil) async throws {
+    let generation = workspaceGeneration
+    while true {
+      if let incoming = result["revision"] as? Int, incoming < revision {
+        guard acknowledged == nil else { throw failure("A newer update arrived. Your saved edit will sync again.") }
+        return
+      }
+      let version = documentGeneration
+      let prepared = try await processor.receive(document, result, acknowledged)
+      try Task.checkCancellation()
+      guard generation == workspaceGeneration else { throw CancellationError() }
+      // An edit can finish while the sync is prepared. Replay it against the
+      // downloaded revision instead of replacing the user's latest work.
+      guard version == documentGeneration else { continue }
+      try persistDocument(prepared.document, encoded: prepared.data)
+      publishDocument()
+      return
+    }
   }
   func fileURL(_ name: String) throws -> URL {
     let dir = try storageDirectory ?? FileManager.default.url(
@@ -499,15 +528,13 @@ enum SessionKey {
     _ path: String, body: JSON? = nil, server: String? = nil, token: String? = nil,
     method: String? = nil
   ) async throws -> JSON {
-    let req = try APIRequest.make(
-      path, body: body, server: server ?? baseURL, token: token ?? SessionKey.read(), method: method
-    )
-    let (data, response) = try await session.data(for: req)
-    let result = try JSONSerialization.jsonObject(with: data) as? JSON ?? [:]
-    guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+    let address = server ?? baseURL, credential = token ?? SessionKey.read()
+    let (result, status) = try await WorkspaceTransport.request(path, body: body,
+      server: address, token: credential, method: method, session: session)
+    guard (200..<300).contains(status) else {
       if result["code"] as? String == "DEVICE_VERIFICATION_REQUIRED",
-        (server ?? baseURL) == baseURL, (token ?? SessionKey.read()) == SessionKey.read() { verificationRequired = true }
-      throw NSError(domain: "AssetHTTP", code: (response as? HTTPURLResponse)?.statusCode ?? 0,
+        address == baseURL, credential == SessionKey.read() { verificationRequired = true }
+      throw NSError(domain: "AssetHTTP", code: status,
         userInfo: [NSLocalizedDescriptionKey: result["error"] as? String ?? "Sync is unavailable", "code": result["code"] as? String ?? ""])
     }
     return result
@@ -542,7 +569,7 @@ enum SessionKey {
           next = try engine.call("localCommand", [next, ["type": "workspace.merge", "payload": ["state": guestState, "id": id]], id]) as? JSON ?? [:]
         }
         try persistDocument(next); publishDocument()
-      } else if !unchanged && pendingCount == 0 && (r["revision"] as? Int ?? 0) >= revision { try receive(r) }
+      } else if !unchanged && pendingCount == 0 && (r["revision"] as? Int ?? 0) >= revision { try await receive(r) }
       connections = (r["connections"] as? [JSON] ?? []).map(Row.init)
       configured = r["plaidConfigured"] as? Bool ?? false
       while let operation = (document["pending"] as? [JSON])?.first {
@@ -552,7 +579,7 @@ enum SessionKey {
         }
         let result = try await request("/sync/command", body: body)
         guard generation == workspaceGeneration, token == SessionKey.read() else { return }
-        try receive(result, acknowledged: operation["id"] as? String)
+        try await receive(result, acknowledged: operation["id"] as? String)
       }
       syncConflict = false; syncStatus = "Synced"
     } catch {
@@ -631,7 +658,7 @@ enum SessionKey {
       await refresh()
       guard pendingCount == 0 else { throw failure("Sync saved changes before restoring a backup.") }
       let r = try await request("/command", body: ["type": type, "payload": payload, "revision": revision])
-      try receive(r)
+      try await receive(r)
       return
     }
     let generation = workspaceGeneration, operationID = uid()
@@ -670,7 +697,7 @@ enum SessionKey {
     let nextRevision = r["revision"] as? Int ?? 0
     guard nextRevision >= revision else { return }
     let next = try engine.call("validateState", [r["state"] as? JSON ?? [:]]) as? JSON ?? [:]
-    try receive(["state": next, "revision": nextRevision])
+    try await receive(["state": next, "revision": nextRevision])
   }
   func refreshBitcoin() async {
     guard mode == "remote", !isDemo, !busy,
