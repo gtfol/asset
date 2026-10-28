@@ -8,7 +8,7 @@ Download merging, pending-edit replay, document encoding, request encoding/decod
 
 All **133 native regression checks** pass, including stalled-provider recovery, queued Apple Card after stalled Apple Cash, duplicate prevention, progress deadline renewal, immediate cancellation, late callbacks after retry, and a 6,000-row downloaded history merge that preserves an unsynced review and leaves the main actor available. These synthetic checks do not measure physical-iPhone sync speed. The iOS simulator build and signed **0.1.0 (10)** archive pass. A separate simulator-only fixture using the production setup view verified that consent and Choose Apple accounts stay enabled during a stalled sync, Stop restores idle controls immediately, and Done dismisses the sheet. No production financial records were changed. Actual Wallet authorization and Apple Card sync still require the owner's iPhone.
 
-TestFlight upload is in progress from the final responsive-setup archive. App Store Connect's browser session expired; the owner has been asked to sign back in for distribution verification.
+The responsive-setup build **10 uploaded successfully** at 1:48 AM Pacific. A follow-up build **11** adds Manage Wallet access and reloads shared accounts after returning from Settings. Apple documents that requestAuthorization does not prompt again after an access decision, so this gives missing accounts a recovery path without disconnecting an existing account. Build 11 archives successfully; upload and TestFlight distribution verification are pending. App Store Connect's browser session expired; the owner has been asked to sign back in.
 
 ## October 27: review, loading, and Apple sync performance
 

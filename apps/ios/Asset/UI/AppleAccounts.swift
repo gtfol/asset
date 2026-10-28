@@ -197,6 +197,8 @@ import SwiftUI
 
 struct AppleAccountsView: View {
   @EnvironmentObject var store: Store
+  @Environment(\.openURL) private var openURL
+  @Environment(\.scenePhase) private var scenePhase
   @ObservedObject private var sync = AppleAccountSync.shared
   @State private var accounts: [FinanceKit.Account] = []
   @State private var targets: [UUID: String] = [:]
@@ -248,11 +250,12 @@ struct AppleAccountsView: View {
             guard FinanceStore.isDataAvailable(.financialData) else { throw failure("Apple financial data is not available on this device.") }
             guard try await FinanceStore.shared.requestAuthorization() == .authorized else { throw failure("Apple access was not granted.") }
             try context.check(store)
-            let sharedAccounts = try await FinanceStore.shared.accounts(query: AccountQuery())
-            try context.check(store)
-            accounts = sharedAccounts
-            if accounts.isEmpty { message = "No accounts were shared. Check Wallet and your Apple financial data permissions." }
+            try await readSharedAccounts(context)
           } }.disabled(!consent || working)
+          Text("Missing an account? Allow it in Asset’s Wallet access settings, then return here.").foregroundStyle(Color.assetSecondary)
+          Button("Manage Wallet access") {
+            if let url = URL(string: UIApplication.openSettingsURLString) { openURL(url) }
+          }
         }
         ForEach(unlinkedAccounts) { account in
           Section(account.displayName) {
@@ -291,11 +294,27 @@ struct AppleAccountsView: View {
       .font(.custom("Lato-Regular", size: 15, relativeTo: .subheadline))
       .listStyle(.plain).scrollContentBackground(.hidden).background(Color.assetBackground)
       .task(id: store.workspaceGeneration) { accounts = []; targets = [:]; consent = false; configuration = [:]; message = ""; await load() }
+      .onChange(of: scenePhase) { _, phase in
+        if phase == .active && consent && available && secured && FinanceStore.isDataAvailable(.financialData) {
+          perform { context in
+            guard try await FinanceStore.shared.authorizationStatus() == .authorized else { return }
+            try context.check(store)
+            try await readSharedAccounts(context)
+          }
+        }
+      }
       .confirmationDialog("Remove synced Apple data? Your original CSV history is kept. You can also revoke access in iPhone Settings.", isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } })) {
         Button("Remove Apple data", role: .destructive) { if let account = removing { perform { context in
           _ = try await context.request(store, "/apple/disconnect", body: ["accountId": account.id]); await load(); await store.refresh(); removing = nil
         } } }
       }
+  }
+  private func readSharedAccounts(_ context: WorkspaceRequest) async throws {
+    let sharedAccounts = try await FinanceStore.shared.accounts(query: AccountQuery())
+    try context.check(store)
+    accounts = sharedAccounts
+    if accounts.isEmpty { message = "No accounts are shared yet. Open Manage Wallet access to choose them." }
+    else if unlinkedAccounts.isEmpty { message = "All shared accounts are connected. To add another, open Manage Wallet access." }
   }
   private func load() async {
     loading = true
