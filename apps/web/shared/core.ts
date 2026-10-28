@@ -97,22 +97,37 @@ export function ledger(s: State, asOf = today(s.settings.timezone), includeExclu
       return parts.filter((x) => includeExcluded || !x.excluded);
     });
 }
+function coverageAccounts(s: State) {
+  // A balance-only loan has no separate payment feed. Its payments already live
+  // on the paying bank account and must not invalidate that account's history.
+  const loanActivity = new Set(s.transactions.filter(t => !t.removed && !t.pending &&
+    t.currency === s.settings.currency &&
+    (effective(t).kind === 'income' || isSpending(effective(t).kind))).map(t => t.accountId));
+  return s.accounts.filter(a => a.enabled && a.currency === s.settings.currency &&
+    a.type !== 'investment' && (a.type !== 'loan' || loanActivity.has(a.id)));
+}
+function coversPeriod(a: State['accounts'][number], start: string, end: string) {
+  return start <= end && a.coverageComplete && !!a.coverageStart && a.coverageStart <= start &&
+    !!a.coverageEnd && a.coverageEnd >= end;
+}
 export function coverage(s: State, start: string, end: string) {
-  const a = s.accounts.filter(
-    (a) => a.enabled && a.currency === s.settings.currency && a.type !== 'investment',
-  );
-  return (
-    start <= end &&
-    a.length > 0 &&
-    a.every(
-      (a) =>
-        a.coverageComplete &&
-        !!a.coverageStart &&
-        a.coverageStart <= start &&
-        !!a.coverageEnd &&
-        a.coverageEnd >= end,
-    )
-  );
+  const accounts = coverageAccounts(s);
+  return accounts.length > 0 && accounts.every(a => coversPeriod(a, start, end));
+}
+function sumActivity(entries: ReturnType<typeof ledger>, start: string, end: string, categoryId?: string) {
+  let income = 0, spending = 0;
+  const categories: Record<string, number> = {};
+  const transactionIds = new Set<string>();
+  for (const t of entries) {
+    if (t.date < start || t.date > end || (categoryId && t.categoryId !== categoryId)) continue;
+    if (t.kind !== 'income' && !isSpending(t.kind)) continue;
+    transactionIds.add('parentId' in t ? t.parentId as string : t.id);
+    if (t.kind === 'income') income += t.amount;
+    const value = spendAmount(t);
+    spending += value;
+    if (isSpending(t.kind)) categories[t.categoryId] = (categories[t.categoryId] ?? 0) + value;
+  }
+  return { income, spending, net: income - spending, categories, transactionCount: transactionIds.size };
 }
 export function totals(
   s: State,
@@ -121,23 +136,16 @@ export function totals(
   includeExcluded = s.settings.includeExcludedCashflow,
   categoryId?: string,
 ) {
-  let income = 0,
-    spending = 0;
-  const categories: Record<string, number> = {};
-  for (const t of ledger(s, end, includeExcluded)) {
-    if (t.date < start || (categoryId && t.categoryId !== categoryId)) continue;
-    if (t.kind === 'income') income += t.amount;
-    const value = spendAmount(t);
-    spending += value;
-    if (isSpending(t.kind)) categories[t.categoryId] = (categories[t.categoryId] ?? 0) + value;
-  }
   return {
-    income,
-    spending,
-    net: income - spending,
-    categories,
+    ...sumActivity(ledger(s, end, includeExcluded), start, end, categoryId),
     complete: coverage(s, start, end),
   };
+}
+const calendarMonthNames = ['January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December'];
+function cashflowPeriodLabel(mode: 'month' | 'year', period: string, current: boolean, end: string) {
+  const label = mode === 'month' ? `${calendarMonthNames[Number(period.slice(5, 7)) - 1]} ${period.slice(0, 4)}` : period;
+  return current ? `${label} · through ${calendarMonthNames[Number(end.slice(5, 7)) - 1].slice(0, 3)} ${Number(end.slice(8))}` : label;
 }
 export function projectSpending(
   spend: number,
@@ -237,22 +245,58 @@ export function cashflow(
     : mode === 'month'
       ? monthEnd(previous)
       : previous + '-12-31';
-  const actual = totals(s, start, end > asOf ? asOf : end),
-    prior = totals(s, priorStart, priorEnd);
-  const comparison = (key: 'income' | 'spending' | 'net') =>
-    !actual.complete || !prior.complete || prior[key] === 0
-      ? null
-      : ((actual[key] - prior[key]) / Math.abs(prior[key])) * 100;
+  // Build the effective ledger once for all cards and monthly buckets.
+  const recorded = ledger(s, asOf, true);
+  const entries = s.settings.includeExcludedCashflow ? recorded : recorded.filter(t => !t.excluded);
+  const accounts = coverageAccounts(s);
+  const summarize = (from: string, to: string) => ({
+    ...sumActivity(entries, from, to > asOf ? asOf : to),
+    complete: accounts.length > 0 && accounts.every(a => coversPeriod(a, from, to)),
+  });
+  const actual = summarize(start, end), prior = summarize(priorStart, priorEnd);
+  const future = start > asOf;
+  const unavailable = (key: 'income' | 'spending' | 'net') => {
+    if (future) return 'future';
+    if (!actual.complete && actual.transactionCount === 0) return 'no-current';
+    if (!prior.complete && prior.transactionCount === 0) return 'no-prior';
+    if (prior[key] === 0) return 'zero-prior';
+    return null;
+  };
+  // Recorded activity remains useful even when an import cannot certify full
+  // coverage. The UI labels this basis instead of claiming data is missing.
+  const comparison = (key: 'income' | 'spending' | 'net') => unavailable(key) ? null :
+    ((actual[key] - prior[key]) / Math.abs(prior[key])) * 100;
+  const recordedDates = new Map<string, { first: string; last: string }>();
+  for (const t of recorded) {
+    const range = recordedDates.get(t.accountId);
+    if (!range) recordedDates.set(t.accountId, { first: t.date, last: t.date });
+    else { if (t.date < range.first) range.first = t.date; if (t.date > range.last) range.last = t.date; }
+  }
+  const history = accounts.map(a => ({
+    id: a.id, name: a.name, mask: a.mask,
+    status: coversPeriod(a, start, end) ? 'verified' : a.coverageComplete ? 'limited' : 'unverified',
+    coverageStart: a.coverageStart ?? null, coverageEnd: a.coverageEnd ?? null,
+    firstRecorded: recordedDates.get(a.id)?.first ?? null,
+    lastRecorded: recordedDates.get(a.id)?.last ?? null,
+  }));
   const year = period.slice(0, 4),
     months = Array.from({ length: 12 }, (_, i) => {
       const month = `${year}-${String(i + 1).padStart(2, '0')}`;
-      const future = month > asOf.slice(0, 7);
       return {
-        month,
-        future,
-        ...totals(s, month + '-01', month >= asOf.slice(0, 7) ? asOf : monthEnd(month)),
+        month, label: calendarMonthNames[i].slice(0, 3), future: month > asOf.slice(0, 7),
+        ...summarize(month + '-01', month >= asOf.slice(0, 7) ? asOf : monthEnd(month)),
       };
     });
+  const priorLabel = cashflowPeriodLabel(mode, previous, current, priorEnd);
+  const comparisonText = (key: 'income' | 'spending' | 'net') => {
+    const reason = unavailable(key);
+    if (reason === 'future') return 'This period has not started.';
+    if (reason === 'no-current') return 'No income or spending recorded for this period.';
+    if (reason === 'no-prior') return `No income or spending recorded in ${priorLabel}.`;
+    if (reason === 'zero-prior') return `${money(prior[key], s.settings.currency)} in ${priorLabel}. Percentage change does not apply from zero.`;
+    const change = comparison(key)!;
+    return `${change > 0 ? '+' : ''}${change.toFixed(1)}% vs ${priorLabel} (${money(prior[key], s.settings.currency)})`;
+  };
   return {
     mode,
     period,
@@ -261,6 +305,13 @@ export function cashflow(
     priorStart,
     priorEnd,
     current,
+    future,
+    periodLabel: cashflowPeriodLabel(mode, period, current, end),
+    priorLabel,
+    comparisonText: { net: comparisonText('net'), spending: comparisonText('spending'), income: comparisonText('income') },
+    comparisonBasis: actual.complete && prior.complete ? 'complete' : 'recorded',
+    comparisonUnavailable: { income: unavailable('income'), spending: unavailable('spending'), net: unavailable('net') },
+    history,
     ...actual,
     prior,
     comparison: {

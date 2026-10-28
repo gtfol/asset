@@ -444,7 +444,7 @@ struct AccountForm: View {
           TextField("End · YYYY-MM-DD", text: $end)
           Toggle("All activity in this range is entered", isOn: $complete)
           Text(
-            "Only mark complete after entering all activity. Incomplete history does not produce a forecast or percentage comparison."
+            "Only mark complete after entering all activity. Forecasts require verified coverage; Cash Flow comparisons can use recorded transactions."
           ).font(.custom("Lato-Regular", size: 13, relativeTo: .caption)).foregroundStyle(
             Color.assetSecondary)
         }

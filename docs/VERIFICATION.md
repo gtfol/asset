@@ -1,5 +1,13 @@
 # Verification record
 
+## October 28: clear cash-flow periods and recorded-history comparisons
+
+Cash Flow labels each amount with its selected month or year-to-date cutoff and explains net cash flow as income minus spending. Month view no longer places a full-year chart underneath monthly totals. Year charts show signed monthly totals with named months, leave future months empty, and open the selected month. Native spending charts use net purchases minus refunds and no longer allocate an unnecessary negative scale. Category totals sort by spending on both platforms.
+
+Unverified import/receipt coverage is distinguished from absent activity. Comparisons use recorded transactions when available and state that basis; zero prior amounts, periods without activity, and future periods have separate messages. An expandable explanation shows each unverified account's recorded date range without claiming that imports certify completeness. Balance-only loans no longer invalidate bank coverage. No transaction classifications, balances, or coverage flags are rewritten. Cash-flow calculations materialize the effective ledger once for the cards and monthly buckets.
+
+All **233 web tests** pass in a serial run, including seven new period, coverage, and reconciliation regressions. A concurrent run alongside archive compilation had two existing database-test timeouts; the serial rerun passes without changing test limits. The production web build, **142 native checks**, calculation parity, simulator build, and signed build **12** archive pass. Browser and iPhone simulator checks verify month/year totals, February chart selection, and the iPhone income link opening two February payroll entries. Narrow web cards were visually checked at 390px. The archive retains FinanceKit; release status is recorded below after upload verification.
+
 ## October 28: compact account cards and loan payment history
 
 Transaction sheets fit their content, with actions directly below the account card. Account rows show institution identity, balance, and credit utilization when a limit is available. Provider identifiers are replaced with institution names from the existing connection metadata; future bank refreshes persist the name for offline display. Unvalued manual history excluded from net worth appears under Other history, without deleting transactions or fabricating balances.

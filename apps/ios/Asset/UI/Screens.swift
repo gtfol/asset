@@ -8,6 +8,7 @@ struct TransactionsView: View {
   var initialCategory = ""
   var initialStart = ""
   var initialEnd = ""
+  var initialKind = ""
   @State var query = ""
   @State var account = ""
   @State var category = ""
@@ -162,6 +163,7 @@ struct TransactionsView: View {
           category = initialCategory
           start = initialStart
           end = initialEnd
+          kind = initialKind
           initialized = true
         }
         refreshSnapshot()
@@ -524,7 +526,7 @@ struct AccountDetail: View {
             Text(a.text("coverageStart", "Unknown") + " to " + a.text("coverageEnd", "unknown"))
             StatusLabel(
               text: a.flag("coverageComplete")
-                ? "Complete for recorded range" : "Incomplete history")
+                ? "Complete for recorded range" : "Coverage not verified")
             Text("Balance history contains recorded snapshots only.").font(
               .custom("Lato-Regular", size: 13, relativeTo: .caption)
             ).foregroundStyle(Color.assetSecondary)
@@ -805,7 +807,7 @@ struct CashFlowView: View {
             }.accessibilityLabel("Next year")
           }.padding(.horizontal)
         }
-        Text("\(c.text("start")) – \(c.text("end"))\(c.flag("current") ? " · to date" : "")").font(
+        Text(c.text("periodLabel")).font(
           .custom("Lato-Regular", size: 13, relativeTo: .caption)
         ).foregroundStyle(Color.assetSecondary)
         Toggle(
@@ -815,56 +817,23 @@ struct CashFlowView: View {
             set: { store.perform("settings.save", ["includeExcludedCashflow": $0]) })
         ).font(.custom("Lato-Regular", size: 13, relativeTo: .caption))
         ForEach(["net", "spending", "income"], id: \.self) { key in
-          Card(title: key == "net" ? "Net income" : key.capitalized) {
-            Metric(
-              title: c.flag("complete") ? "Actual activity" : "Known activity · incomplete history",
-              value: money(c.data[key], store.currency),
-              color: key == "net" && c.number(key) < 0 ? .assetAmber : .assetText)
-            let comparison = c.object("comparison")
-            if !comparison.missing(key) {
-              Text(
-                "\(comparison.number(key).formatted(.number.precision(.fractionLength(1))))% vs \(money(c.object("prior").data[key],store.currency))"
-              ).font(.custom("Lato-Regular", size: 13, relativeTo: .caption)).foregroundStyle(
-                Color.assetSecondary)
-            } else {
-              Text("Comparison unavailable: missing history or a zero prior value.").font(
-                .custom("Lato-Regular", size: 13, relativeTo: .caption)
-              ).foregroundStyle(Color.assetSecondary)
-            }
-            CashFlowChart(
-              months: c.rows("months"), categories: store.categories, metric: key,
-              currency: store.currency,
-              selectedMonth: $selectedMonth)
-            if let selectedMonth,
-              let selected = c.rows("months").first(where: {
-                $0.text("month").hasSuffix("-" + selectedMonth)
-              })
-            {
-              Button {
-                month = selected.text("month")
-                mode = "month"
-                self.selectedMonth = nil
-              } label: {
-                Text("Open \(selected.text("month")) · \(money(selected.data[key],store.currency))")
-                  .font(.custom("Lato-Regular", size: 13, relativeTo: .caption))
-                  .frame(minHeight: 44).contentShape(Rectangle())
-              }
-            }
-            NavigationLink {
-              TransactionsView(initialStart: c.text("start"), initialEnd: c.text("end"))
-            } label: {
-              Text("View transactions")
-                .font(.custom("Lato-Regular", size: 13, relativeTo: .caption))
-                .frame(minHeight: 44).contentShape(Rectangle())
-            }
-
-            Text("Previous: \(c.text("priorStart")) – \(c.text("priorEnd"))").font(
-              .custom("Lato-Regular", size: 12, relativeTo: .caption2)
-            ).foregroundStyle(Color.assetSecondary)
+          CashFlowMetricCard(c: c, metric: key, selectedMonth: $selectedMonth) { selected in
+            month = selected
+            mode = "month"
+            selectedMonth = nil
           }
         }
         Card(title: "Spending by category") {
-          ForEach(c.object("categories").data.keys.sorted(), id: \.self) { id in
+          Text(c.text("periodLabel")).font(.custom("Lato-Regular", size: 13, relativeTo: .caption))
+            .foregroundStyle(Color.assetSecondary)
+          if c.object("categories").data.isEmpty {
+            Text(c.flag("future") ? "This period has not started." : "No spending recorded in this period.")
+              .font(.custom("Lato-Regular", size: 15, relativeTo: .subheadline))
+              .foregroundStyle(Color.assetSecondary)
+          }
+          ForEach(c.object("categories").data.keys.sorted {
+            c.object("categories").number($0) > c.object("categories").number($1)
+          }, id: \.self) { id in
             let category = store.categories.first { $0.id == id } ?? Row()
             NavigationLink {
               TransactionsView(
@@ -879,6 +848,26 @@ struct CashFlowView: View {
             }
           }
         }
+        DisclosureGroup("About these totals") {
+          VStack(alignment: .leading, spacing: 12) {
+            Text("Totals and comparisons use recorded transactions, not account balances. Transfers and pending transactions are excluded.")
+            Text(store.row.object("settings").flag("includeExcludedCashflow")
+              ? "Budget-excluded transactions are included." : "Budget-excluded transactions are excluded.")
+            Text("Imports and forwarded receipts do not certify complete history; that alone does not indicate a failed sync.")
+            ForEach(c.rows("history").filter { $0.text("status") != "verified" }) { account in
+              VStack(alignment: .leading, spacing: 4) {
+                Text(account.text("name") + (account.text("mask").isEmpty ? "" : " · ••" + account.text("mask")))
+                  .foregroundStyle(Color.assetText)
+                Text(account.text("status") == "limited"
+                  ? "Verified history: \(account.text("coverageStart")) – \(account.text("coverageEnd"))"
+                  : "Full-period coverage has not been verified.")
+                Text(account.missing("firstRecorded") ? "No posted transactions recorded."
+                  : "Recorded transactions: \(account.text("firstRecorded")) – \(account.text("lastRecorded"))")
+              }.padding(.top, 4)
+            }
+          }.padding(.top, 12)
+        }.font(.custom("Lato-Regular", size: 13, relativeTo: .caption))
+          .foregroundStyle(Color.assetSecondary)
       }.padding(20)
     }.onChange(of: year) { _, _ in selectedMonth = nil }
       .onChange(of: mode) { _, _ in selectedMonth = nil }
@@ -886,32 +875,82 @@ struct CashFlowView: View {
   }
 }
 
+private struct CashFlowMetricCard: View {
+  @EnvironmentObject var store: Store
+  let c: Row
+  let metric: String
+  @Binding var selectedMonth: String?
+  let openMonth: (String) -> Void
+  private var title: String { metric == "net" ? "Net cash flow" : metric.capitalized }
+  private var definition: String {
+    metric == "net" ? "Income minus spending" : metric == "spending" ? "Posted purchases minus refunds" : "Posted income"
+  }
+  var body: some View {
+    Card(title: title) {
+      VStack(alignment: .leading, spacing: 7) {
+        Text(c.text("periodLabel")).font(.custom("Lato-Regular", size: 13, relativeTo: .caption))
+          .foregroundStyle(Color.assetSecondary)
+        Text(c.flag("future") ? "—" : money(c.data[metric], store.currency))
+          .font(.custom("Lato-Regular", size: 28, relativeTo: .title))
+          .foregroundStyle(metric == "net" ? (c.number(metric) < 0 ? Color.assetAmber : Color.assetGreen) : Color.assetText)
+        Text(definition).font(.custom("Lato-Regular", size: 13, relativeTo: .caption))
+          .foregroundStyle(Color.assetSecondary)
+      }
+      VStack(alignment: .leading, spacing: 4) {
+        Text(c.object("comparisonText").text(metric))
+        if !c.object("comparison").missing(metric) && c.text("comparisonBasis") == "recorded" {
+          Text("Based on recorded transactions")
+        }
+      }.font(.custom("Lato-Regular", size: 13, relativeTo: .caption))
+        .foregroundStyle(Color.assetSecondary)
+      if c.text("mode") == "year" {
+        CashFlowChart(months: c.rows("months"), metric: metric, currency: store.currency,
+          selectedMonth: $selectedMonth)
+        if let selectedMonth,
+          let selected = c.rows("months").first(where: { $0.text("month").hasSuffix("-" + selectedMonth) && !$0.flag("future") }) {
+          Button {
+            openMonth(selected.text("month"))
+          } label: {
+            Text("Open \(selected.text("label")) · \(money(selected.data[metric], store.currency))")
+              .font(.custom("Lato-Regular", size: 13, relativeTo: .caption))
+              .frame(minHeight: 44).contentShape(Rectangle())
+          }
+        }
+      }
+      NavigationLink {
+        TransactionsView(initialStart: c.text("start"), initialEnd: c.text("end"),
+          initialKind: metric == "income" ? "income" : "")
+      } label: {
+        Text(metric == "income" ? "View income" : "View period’s transactions")
+          .font(.custom("Lato-Regular", size: 13, relativeTo: .caption))
+          .frame(minHeight: 44).contentShape(Rectangle())
+      }
+    }
+  }
+}
+
 private struct CashFlowChart: View {
   let months: [Row]
-  let categories: [Row]
   let metric: String
   let currency: String
   @Binding var selectedMonth: String?
   @Environment(\.dynamicTypeSize) private var dynamicTypeSize
   @ScaledMetric(relativeTo: .caption2) private var axisLabelWidth = 32.0
   private let calendarMonths = (1...12).map { String(format: "%02d", $0) }
+  private var title: String { metric == "net" ? "Net cash flow" : metric.capitalized }
+  private var valueRange: ClosedRange<Double> {
+    let values = months.filter { !$0.flag("future") }.map { $0.number(metric) / 100 }
+    let low = min(0, values.min() ?? 0) * 1.1
+    let high = max(0, values.max() ?? 0) * 1.1
+    return low...(high == low ? low + 1 : high)
+  }
   var body: some View {
     Chart {
       ForEach(months.filter { !$0.flag("future") }) { month in
-        if metric == "spending" {
-          ForEach(month.object("categories").data.keys.sorted(), id: \.self) { id in
-            BarMark(
-              x: .value("Month", String(month.text("month").suffix(2))),
-              y: .value("Spending", month.object("categories").number(id) / 100)
-            ).foregroundStyle(
-              Color(hex: categories.first { $0.id == id }?.text("color") ?? "#999999"))
-          }
-        } else {
-          BarMark(
-            x: .value("Month", String(month.text("month").suffix(2))),
-            y: .value("Actual", month.number(metric) / 100)
-          ).foregroundStyle(month.number(metric) < 0 ? Color.assetAmber : Color.assetBlue)
-        }
+        BarMark(
+          x: .value("Month", String(month.text("month").suffix(2))),
+          y: .value(title, month.number(metric) / 100)
+        ).foregroundStyle(month.number(metric) < 0 ? Color.assetAmber : Color.assetBlue)
       }
       if let selectedMonth,
         let selected = months.first(where: {
@@ -928,6 +967,7 @@ private struct CashFlowChart: View {
         .foregroundStyle(Color.assetText).symbolSize(30)
       }
     }.chartXScale(domain: calendarMonths)
+      .chartYScale(domain: valueRange)
       .chartOverlay { proxy in
         GeometryReader { geometry in
           if let plotFrame = proxy.plotFrame {
@@ -956,8 +996,12 @@ private struct CashFlowChart: View {
         AxisMarks(
           values: dynamicTypeSize.isAccessibilitySize
             ? ["01", "04", "07", "10", "12"] : calendarMonths
-        ) {
-          AxisValueLabel()
+        ) { axis in
+          AxisValueLabel {
+            if let value = axis.as(String.self), let month = months.first(where: { $0.text("month").hasSuffix("-" + value) }) {
+              Text(month.text("label")).font(.custom("Lato-Regular", size: 10, relativeTo: .caption2))
+            }
+          }
         }
       }.chartYAxis {
         AxisMarks(position: .leading, values: .automatic(desiredCount: 3)) { value in

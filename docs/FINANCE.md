@@ -8,7 +8,7 @@ Posted spending minus refunds counts once. Split parents are replaced by their p
 
 Projection = eligible spend to date × calendar days in month ÷ elapsed days. It is **Asset's transparent estimate**, not a claimed Copilot algorithm. It requires complete history, disappears for completed historical months, and can be distorted by early-month or lumpy spending. There is no recurring engine and no deduction for expected future bills.
 
-Complete coverage must be established per account. CSV import alone does not prove completeness; confirm a known range in manual account settings. Plaid history may be shorter than requested. Missing history is labeled and suppresses unreliable comparisons/projections.
+Complete coverage must be established per account. CSV import alone does not prove completeness; confirm a known range in manual account settings. Plaid history may be shorter than requested. Projections require verified coverage. Cash Flow compares recorded activity when both periods have activity or verified coverage, with an explicit recorded-transactions label when coverage is unverified. No recorded history and a zero comparison amount are distinct states; neither produces a percentage. Balance-only loan accounts do not invalidate bank transaction coverage. Month cards identify their month, year cards identify the year-to-date cutoff, and annual charts do not plot future activity.
 
 Portfolio balance growth is never labeled investment return. Complete contribution/valuation history is needed for cash-flow-adjusted return; until then, it is unavailable. Account balances can differ from holdings because of cash, missing securities, and timestamps.
 

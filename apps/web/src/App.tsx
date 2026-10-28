@@ -577,7 +577,7 @@ export function App() {
                     ) : d.historical ? (
                       'Completed month'
                     ) : !d.complete ? (
-                      'Incomplete history · estimate unavailable'
+                      'Estimate needs verified history'
                     ) : (
                       'No estimate yet'
                     )}
@@ -648,7 +648,7 @@ export function App() {
                     </strong>
                     <p>
                       {d.historical ? 'Calendar month' : 'Month to date'}
-                      {!d.netThisMonth.complete ? ' · incomplete history' : ''}
+                      {!d.netThisMonth.complete ? ' · recorded transactions' : ''}
                     </p>
                   </div>
                   <div className="net-pair">
@@ -1979,9 +1979,7 @@ function CashFlow({
       <div className="page-heading">
         <div>
           <p>
-            {c.start} — {c.end}
-            {c.current ? ' · to date' : ''}
-            {!c.complete ? ' · incomplete history' : ''}
+            {c.periodLabel}
           </p>
         </div>
         <div className="period-controls">
@@ -2036,7 +2034,7 @@ function CashFlow({
         {(['net', 'spending', 'income'] as const).map((key) => (
           <section className="card cash-card" key={key}>
             <div className="card-heading">
-              <h3>{key === 'net' ? 'Net income' : key === 'spending' ? 'Spending' : 'Income'}</h3>
+              <h3>{key === 'net' ? 'Net cash flow' : key === 'spending' ? 'Spending' : 'Income'}</h3>
               <button
                 onClick={() =>
                   drill({
@@ -2050,117 +2048,55 @@ function CashFlow({
                 <ChevronRight size={13} />
               </button>
             </div>
+            <p className="cash-period">{c.periodLabel}</p>
             <strong
               className={
                 'cash-number ' + (key === 'net' ? (c.net >= 0 ? 'positive' : 'negative') : '')
               }
             >
-              {money(c[key], currency)}
+              {c.future ? '—' : money(c[key], currency)}
             </strong>
-            <p className="comparison">
-              {c.comparison[key] === null ? (
-                !c.prior.complete ? (
-                  'Missing prior history'
-                ) : !c.complete ? (
-                  'Current history incomplete'
-                ) : c.prior[key] === 0 ? (
-                  'No percentage comparison: prior value is zero'
-                ) : (
-                  'Unavailable'
-                )
-              ) : (
-                <>
-                  <span className="status muted">
-                    {c.comparison[key]! > 0 ? '+' : ''}
-                    {c.comparison[key]!.toFixed(1)}%
-                  </span>{' '}
-                  versus {money(c.prior[key], currency)}
-                </>
-              )}
+            <p className="cash-definition">
+              {key === 'net' ? 'Income minus spending' : key === 'spending' ? 'Posted purchases minus refunds' : 'Posted income'}
             </p>
-            {mode === 'year' ? (
+            <p className="comparison">{c.comparisonText[key]}
+              {c.comparison[key] !== null && c.comparisonBasis === 'recorded' && <small>Based on recorded transactions</small>}
+            </p>
+            {mode === 'year' && (
               <div className="bars" aria-label={`${key} by calendar month`}>
-                {c.months.map((m, i) => {
-                  const max = Math.max(1, ...c.months.map((m) => Math.abs(m[key])));
+                {c.months.map((m) => {
+                  const values = c.months.filter(m => !m.future).map(m => m[key]);
+                  const low = Math.min(0, ...values), high = Math.max(0, ...values);
+                  const span = Math.max(1, high - low);
+                  const zero = -low / span * 100, height = Math.abs(m[key]) / span * 100;
                   return (
                     <button
                       key={m.month}
                       className={'month-bar ' + (m.future ? 'future' : '')}
-                      title={`${m.month}: ${m.future ? 'Future period' : !m.complete ? 'Incomplete history; known total ' + money(m[key], currency) : money(m[key], currency)}`}
+                      disabled={m.future}
+                      aria-label={`${m.label} ${year}: ${m.future ? 'Future period' : money(m[key], currency) + ' recorded; open month'}`}
+                      title={`${m.label} ${year}: ${m.future ? 'Future period' : money(m[key], currency) + ' recorded'}`}
                       onClick={() => {
                         setMonth(m.month);
                         setMode('month');
                       }}
                     >
-                      <span className="bar-space">
-                        <i
-                          style={{
-                            height: `${m.future ? 0 : Math.max(1, (Math.abs(m[key]) / max) * 100)}%`,
-                            background:
-                              key === 'spending'
-                                ? 'transparent'
-                                : m[key] < 0
-                                  ? 'var(--error)'
-                                  : 'var(--accent)',
-                            opacity: m.future ? 0 : !m.complete ? 0.45 : 1,
-                            display: 'flex',
-                            flexDirection: 'column-reverse',
-                          }}
-                        >
-                          {key === 'spending' &&
-                            Object.entries(m.categories)
-                              .filter(([, v]) => v > 0)
-                              .map(([id, value]) => (
-                                <span
-                                  key={id}
-                                  style={{
-                                    display: 'block',
-                                    width: '100%',
-                                    height: `${
-                                      (value /
-                                        Math.max(
-                                          1,
-                                          Object.values(m.categories)
-                                            .filter((v) => v > 0)
-                                            .reduce((a, b) => a + b, 0),
-                                        )) *
-                                      100
-                                    }%`,
-                                    background:
-                                      state.categories.find((c) => c.id === id)?.color ??
-                                      'var(--muted)',
-                                  }}
-                                />
-                              ))}
-                        </i>
+                      <span className="bar-space signed-bars">
+                        <span className="bar-zero" style={{ bottom: `${zero}%` }} />
+                        <i style={{
+                          height: `${m.future ? 0 : height}%`,
+                          bottom: `${m[key] < 0 ? zero - height : zero}%`,
+                          background: m[key] < 0 ? 'var(--error)' : 'var(--accent)',
+                        }} />
                       </span>
                       <small>
-                        {new Date(2026, i, 1).toLocaleDateString('en-US', { month: 'short' })}
+                        {m.label}
                       </small>
                     </button>
                   );
                 })}
               </div>
-            ) : (
-              <div className="cash-month-bar">
-                <span
-                  style={{
-                    width: `${key === 'net' ? Math.min(100, (Math.abs(c.net) / Math.max(1, c.income)) * 100) : 100}%`,
-                    background: c[key] < 0 ? 'var(--error)' : 'var(--accent)',
-                  }}
-                />
-                <p>
-                  {key === 'net'
-                    ? 'Income minus actual spending'
-                    : key === 'spending'
-                      ? 'Posted spending minus refunds'
-                      : 'Posted income only'}
-                </p>
-              </div>
             )}
-            <p className="tiny muted">
-              Previous: {c.priorStart} — {c.priorEnd}
-            </p>
           </section>
         ))}
       </div>
@@ -2168,7 +2104,7 @@ function CashFlow({
         <div className="card-heading">
           <h3>Spending by category</h3>
           <span className="muted tiny">
-            Actual activity · {state.settings.includeExcludedCashflow ? 'including' : 'excluding'}{' '}
+            {c.periodLabel} · {state.settings.includeExcludedCashflow ? 'including' : 'excluding'}{' '}
             excluded spend
           </span>
         </div>
@@ -2199,13 +2135,21 @@ function CashFlow({
             })}
         </div>
         {Object.keys(c.categories).length === 0 && (
-          <Empty title={c.complete ? 'No spending this period' : 'History not available'}>
-            {c.complete
-              ? 'There is no posted spending in this period.'
-              : 'Import history or select another period. Missing history is not zero activity.'}
+          <Empty title={c.future ? 'This period has not started' : 'No spending recorded'}>
+            {c.future ? 'Choose the current month or an earlier period.' : 'There are no posted purchases or refunds in this period with these settings.'}
           </Empty>
         )}
       </section>
+      <details className="cash-history">
+        <summary>About these totals</summary>
+        <p>Totals and comparisons use recorded transactions, not account balances. Transfers and pending transactions are excluded.</p>
+        <p>{state.settings.includeExcludedCashflow ? 'Budget-excluded transactions are included.' : 'Budget-excluded transactions are excluded.'} Imports and forwarded receipts do not certify complete history; that alone does not indicate a failed sync.</p>
+        <ul>{c.history.filter(a => a.status !== 'verified').map(a => <li key={a.id}>
+          <strong>{a.name}{a.mask ? ` · ••${a.mask}` : ''}</strong>
+          <span>{a.status === 'limited' ? `Verified history: ${a.coverageStart} – ${a.coverageEnd}` : 'Full-period coverage has not been verified.'}</span>
+          <span>{a.firstRecorded ? `Recorded transactions: ${a.firstRecorded} – ${a.lastRecorded}` : 'No posted transactions recorded.'}</span>
+        </li>)}</ul>
+      </details>
     </div>
   );
 }
