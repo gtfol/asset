@@ -97,6 +97,7 @@ struct TransactionForm: View {
   @State var kind = "spending"
   @State var notes = ""
   @State var recurring = ""
+  @State var loanAccount = ""
   @State var excluded = false
   @State var reviewed = false
   @State var createRule = false
@@ -127,6 +128,14 @@ struct TransactionForm: View {
       Section {
         TextField("Notes", text: $notes, axis: .vertical).lineLimit(3...6)
         TextField("Recurring payment label (optional)", text: $recurring)
+        if store.accounts.contains(where: { $0.text("type") == "loan" }) {
+          Picker("Loan payment", selection: $loanAccount) {
+            Text("Not linked to a loan").tag("")
+            ForEach(store.accounts.filter { $0.text("type") == "loan" && $0.id != account && $0.text("currency") == (store.accounts.first { $0.id == account }?.text("currency") ?? "USD") }) {
+              Text($0.text("name")).tag($0.id)
+            }
+          }
+        }
         Toggle("Exclude from budget", isOn: $excluded)
         if !reviewMode { Toggle("Reviewed", isOn: $reviewed) }
       }
@@ -192,6 +201,7 @@ struct TransactionForm: View {
         kind = t.text("kind")
         notes = t.text("notes")
         recurring = t.text("recurring")
+        loanAccount = t.text("loanAccountId")
         excluded = t.flag("excluded")
         reviewed = reviewMode || t.flag("reviewed")
         splits = t.rows("splits").map {
@@ -242,7 +252,7 @@ struct TransactionForm: View {
           "edits": [
             "name": name, "date": date, "categoryId": category, "kind": kind, "notes": notes,
             "excluded": excluded,
-            "recurring": recurring,
+            "recurring": recurring, "loanAccountId": loanAccount.isEmpty ? NSNull() : loanAccount as Any,
           ], "reviewed": reviewMode ? t.flag("reviewed") : reviewed,
         ])
       if splitting && !reconciling {
@@ -266,7 +276,7 @@ struct TransactionForm: View {
           "id": uid(), "name": name, "date": date, "amount": cents, "kind": kind,
           "accountId": account, "currency": a.text("currency"), "categoryId": category,
           "source": "manual", "importedAt": isoNow(), "notes": notes, "excluded": excluded,
-          "recurring": recurring,
+          "recurring": recurring, "loanAccountId": loanAccount.isEmpty ? NSNull() : loanAccount as Any,
           "reviewed": reviewed, "splits": parts,
         ])
     }
@@ -336,6 +346,7 @@ struct AccountForm: View {
   var account: Row?
   @State var name = ""
   @State var type = "checking"
+  @State var mask = ""
   @State var currency = "USD"
   @State var balance = ""
   @State var creditLimit = ""
@@ -359,6 +370,7 @@ struct AccountForm: View {
         var p = account?.data ?? [:]
         p["id"] = account?.id ?? uid()
         p["name"] = name
+        if !connected { p["mask"] = mask }
         p["type"] = type
         p["currency"] = currency
         if !connected {
@@ -386,6 +398,7 @@ struct AccountForm: View {
     ) {
       Section {
         TextField("Account name", text: $name)
+        if !connected { TextField("Last four (optional)", text: $mask).onChange(of: mask) { _, value in mask = String(value.prefix(4)) } }
         Picker("Type", selection: $type) {
           ForEach(["checking", "savings", "credit", "investment", "loan", "manual"], id: \.self) {
             Text($0.capitalized)
@@ -441,6 +454,7 @@ struct AccountForm: View {
       loaded = true
       if let a = account {
         name = a.text("name")
+        mask = a.text("mask")
         type = a.text("type")
         currency = a.text("currency")
         balance = a.missing("balance") ? "" : String(a.number("balance") / 100)
@@ -606,6 +620,7 @@ struct TransactionDetailSheet: View {
   @State private var working = false
   @State private var error = ""
   @State private var loaded = false
+  @State private var contentHeight: CGFloat = 520
   private var current: Row {
     store.transactions.first(where: { $0.id == transaction.id }) ?? transaction
   }
@@ -629,7 +644,7 @@ struct TransactionDetailSheet: View {
   var body: some View {
     NavigationStack {
       ScrollView {
-        VStack(spacing: 18) {
+        VStack(spacing: 14) {
           VStack(spacing: 6) {
             Text(current.flag("reviewed") ? "Transaction" : "Transaction to review")
               .font(.custom("Lato-Medium", size: 12, relativeTo: .caption)).foregroundStyle(
@@ -637,8 +652,8 @@ struct TransactionDetailSheet: View {
             Text(dateLabel + (current.flag("pending") ? " · Pending" : ""))
               .font(.custom("Lato-Regular", size: 13, relativeTo: .caption)).foregroundStyle(
                 Color.assetSecondary)
-          }.padding(.top, 22)
-          Text(current.text("name")).font(.custom("Lato-Medium", size: 23, relativeTo: .title2))
+          }.padding(.top, 20)
+          Text(current.text("name")).font(.custom("Lato-Medium", size: 21, relativeTo: .title2))
             .multilineTextAlignment(.center).padding(.top, 8)
           Text(money(current.data["amount"], current.text("currency")))
             .font(.custom("Lato-Medium", size: 32, relativeTo: .largeTitle)).monospacedDigit()
@@ -679,23 +694,7 @@ struct TransactionDetailSheet: View {
               }
             }.font(.custom("Lato-Regular", size: 13, relativeTo: .caption)).tint(.assetBlue)
           }
-          VStack(alignment: .leading, spacing: 12) {
-            Text(account.text("type", "Account").capitalized).font(
-              .custom("Lato-Regular", size: 12, relativeTo: .caption)
-            ).foregroundStyle(Color.assetBlue)
-            HStack(alignment: .bottom) {
-              Text(account.text("name", "Account")).font(
-                .custom("Lato-Medium", size: 14, relativeTo: .subheadline))
-              Spacer()
-              Text(
-                account.text("mask").isEmpty
-                  ? current.text("currency") : "•• \(account.text("mask"))"
-              )
-              .font(.custom("Lato-Regular", size: 12, relativeTo: .caption)).foregroundStyle(
-                Color.assetSecondary)
-            }
-          }.padding(18).frame(maxWidth: 280).background(
-            Color.assetBlueWash, in: RoundedRectangle(cornerRadius: 16))
+          AccountCard(account: account).frame(maxWidth: 240).padding(.top, 4)
           if current.flag("excluded") {
             Text("Excluded from budget").font(
               .custom("Lato-Regular", size: 12, relativeTo: .caption)
@@ -710,10 +709,6 @@ struct TransactionDetailSheet: View {
             Text(error).font(.custom("Lato-Regular", size: 13, relativeTo: .caption))
               .foregroundStyle(Color.assetError)
           }
-        }.padding(.horizontal, 24).padding(.bottom, 24).frame(maxWidth: .infinity)
-      }.background(Color.assetSurface).foregroundStyle(Color.assetText)
-        .toolbar(.hidden, for: .navigationBar)
-        .safeAreaInset(edge: .bottom) {
           ViewThatFits(in: .horizontal) {
             HStack(spacing: 10) {
               moreButton
@@ -729,9 +724,13 @@ struct TransactionDetailSheet: View {
                 if changed && !current.flag("reviewed") { saveButton }
               }
             }
-          }.padding(.horizontal, 20).padding(.vertical, 12).background(Color.assetSurface)
-        }
-    }.presentationDetents([.height(620), .large]).presentationDragIndicator(.visible)
+          }.padding(.top, 10)
+        }.padding(.horizontal, 20).padding(.bottom, 18).frame(maxWidth: .infinity)
+          .onGeometryChange(for: CGFloat.self) { ceil($0.size.height) } action: { contentHeight = $0 }
+      }.scrollBounceBehavior(.basedOnSize)
+        .background(Color.assetSurface).foregroundStyle(Color.assetText)
+        .toolbar(.hidden, for: .navigationBar)
+    }.presentationDetents([.height(contentHeight), .large]).presentationDragIndicator(.visible)
       .presentationCornerRadius(28).presentationBackground(Color.assetSurface)
       .interactiveDismissDisabled(working).disabled(working)
       .sheet(isPresented: $choosing) { TransactionCategorySheet(value: $category) }

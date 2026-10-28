@@ -1,7 +1,9 @@
+import { AccountCard } from './account-card';
+import { accountIdentity, accountBalanceLabel, creditUtilization, historyOnly, type InstitutionConnection } from '../shared/account-presentation';
 import { ReviewQueue } from './review-queue';
 import { Workspace } from './workspace';
 import { Modal } from './components';
-import { loanLenders } from '../shared/loans';
+import { loanLenders, loanPaymentSummary } from '../shared/loans';
 import { DeviceVerification } from './device-verification';
 import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import {
@@ -360,7 +362,7 @@ export function App() {
             <section key={String(label)}>
               <h3>{label}</h3>
               {state.accounts
-                .filter((a) => (types as string[]).includes(a.type))
+                .filter((a) => (types as string[]).includes(a.type) && !historyOnly(a))
                 .map((a) => (
                   <button
                     key={a.id}
@@ -372,8 +374,8 @@ export function App() {
                     <span className={'account-dot ' + a.type} />
                     <span>{a.name}</span>
                     <small>
-                      {a.source === 'venmo' && a.balance == null
-                        ? 'Receipts only'
+                      {a.balance == null
+                        ? accountBalanceLabel(a)
                         : money(a.balance, a.currency).replace(/\.00$/, '')}
                     </small>
                   </button>
@@ -690,6 +692,7 @@ export function App() {
         )}
         {page === 'Accounts' && (
           <Accounts
+            connections={connections}
             state={state}
             run={run}
             selected={selected}
@@ -715,6 +718,7 @@ export function App() {
       </main>
       {['Dashboard', 'Transactions'].includes(page) && tx && (
         <TransactionEditor
+          connections={connections}
           key={tx.id}
           transaction={tx}
           reviewMode={page === 'Dashboard' && !tx.reviewed}
@@ -1565,6 +1569,7 @@ function Categories({
   );
 }
 function Accounts({
+  connections,
   state,
   run,
   selected,
@@ -1575,6 +1580,7 @@ function Accounts({
   bitcoinRequest,
   bitcoinError,
 }: {
+  connections: InstitutionConnection[];
   state: State;
   run: Run;
   selected: string | null;
@@ -1612,7 +1618,7 @@ function Accounts({
           <WorthCard worth={worth} currency={state.settings.currency} onOpen={() => {}} />
           <div className="account-groups">
             {['checking', 'savings', 'credit', 'investment', 'loan', 'manual'].map((type) => {
-              const accounts = state.accounts.filter((a) => a.type === type);
+              const accounts = state.accounts.filter((a) => a.type === type && !historyOnly(a));
               return (
                 accounts.length > 0 && (
                   <section key={type}>
@@ -1627,45 +1633,26 @@ function Accounts({
                         key={a.id}
                         onClick={() => setSelected(a.id)}
                       >
-                        <span className={'account-avatar ' + a.type}>
-                          <Landmark size={19} />
+                        <AccountCard account={a} connections={connections} />
+                        <span className="account-values">
+                          {a.balance != null ? <><small>Balance</small><strong>{money(a.balance, a.currency)}</strong></>
+                            : <span className="muted">{accountBalanceLabel(a)}</span>}
+                          {creditUtilization(a) != null && <small>{creditUtilization(a)!.toFixed(1)}% utilized</small>}
+                          {!a.includeInNetWorth && <small>Not in net worth</small>}
                         </span>
-                        <span>
-                          {a.name}
-                          <small>
-                            {a.source === 'demo'
-                              ? 'Demo data'
-                              : a.source === 'manual'
-                                ? 'Manual account'
-                                : a.source === 'csv'
-                                  ? 'CSV import'
-                                  : a.source === 'venmo'
-                                    ? 'Venmo receipts · balance not synced'
-                                    : a.source === 'bitcoin'
-                                      ? 'Bitcoin address'
-                                      : a.source === 'financekit'
-                                        ? 'Apple · synced from iPhone'
-                                        : 'Plaid cached balance'}{' '}
-                            · {a.mask ?? a.currency}
-                            {!a.enabled ? ' · Sync account disabled' : ''}
-                          </small>
-                        </span>
-                        <b>
-                          {a.source === 'venmo' && a.balance == null
-                            ? 'Receipts only'
-                            : money(a.balance, a.currency)}
-                          <small>
-                            {a.includeInNetWorth
-                              ? 'Included in net worth'
-                              : 'Excluded from net worth'}
-                          </small>
-                        </b>
                       </button>
                     ))}
                   </section>
                 )
               );
             })}
+            {state.accounts.some(historyOnly) && <details className="history-accounts">
+              <summary>Other history ({state.accounts.filter(historyOnly).length})</summary>
+              <p className="muted tiny">Past transactions are kept here. These accounts have no current balance and are excluded from net worth.</p>
+              {state.accounts.filter(historyOnly).map(account => <button key={account.id} className="history-account-row" onClick={() => setSelected(account.id)}>
+                <span>{account.name}</span><span className="muted tiny">History only</span>
+              </button>)}
+            </details>}
           </div>
           {state.accounts.length === 0 && (
             <Empty title="No accounts">
@@ -1691,10 +1678,10 @@ function Accounts({
                   balance.
                 </p>
               ) : (
-                <strong className="detail-number">{money(a.balance, a.currency)}</strong>
+                <strong className="detail-number">{a.balance == null ? accountBalanceLabel(a) : money(a.balance, a.currency)}</strong>
               )}
               <p className="muted tiny">
-                {a.source === 'venmo' ? 'Receipt forwarding' : a.source} · updated{' '}
+                {accountIdentity(a, connections).name} · updated{' '}
                 {new Date(a.updatedAt).toLocaleString()}
               </p>
               {a.balance != null && new Date(a.updatedAt).getTime() < Date.now() - 4 * 864e5 && (
@@ -1734,6 +1721,7 @@ function Accounts({
                   </p>
                 </section>
               )}
+              {a.type === 'loan' && <LoanPayments key={a.id} account={a} state={state} run={run} />}
               {a.bitcoin && (
                 <BitcoinDetail
                   key={a.id}
@@ -2220,4 +2208,35 @@ function CashFlow({
       </section>
     </div>
   );
+}
+
+function LoanPayments({ account, state, run }: { account: State['accounts'][number]; state: State; run: Run }) {
+  const summary = useMemo(() => loanPaymentSummary(state, account.id), [state, account.id]);
+  const [busy, setBusy] = useState(false), [error, setError] = useState('');
+  return <section className="loan-payments">
+    <h3>Payments</h3>
+    <p>{summary.payments.length} linked · {money(summary.totalPaid, account.currency)} paid</p>
+    <p className="tiny muted">Payments stay on the paying account. They include interest and do not change this loan’s balance.</p>
+    {!!summary.candidates.length && <details open>
+      <summary>{summary.candidates.length} matching payments</summary>
+      <ul className="loan-payment-list">{summary.candidates.map(t => <li key={t.id}>
+        <div><span>{t.date}</span><strong>{money(t.amount, t.currency)}</strong></div>
+        <span>{t.name}</span>
+        <small>{state.accounts.find(a => a.id === t.accountId)?.name} · {t.matchReason}</small>
+      </li>)}</ul>
+      <button disabled={busy} onClick={async () => {
+        setBusy(true); setError('');
+        try { await run({ type: 'transactions.linkLoan', payload: { loanAccountId: account.id, ids: summary.candidates.map(t => t.id) } }); }
+        catch (e: any) { setError(e.message); } finally { setBusy(false); }
+      }}>{busy ? 'Linking…' : `Link ${summary.candidates.length} matching payments`}</button>
+    </details>}
+    {!!summary.payments.length && <details><summary>Linked payment history</summary>
+      <ul className="loan-payment-list">{summary.payments.map(t => <li key={t.id}>
+        <div><span>{t.date}</span><strong>{money(t.amount, t.currency)}</strong></div>
+        <span>{t.name}</span>
+        <small>{state.accounts.find(a => a.id === t.accountId)?.name}</small>
+      </li>)}</ul>
+    </details>}
+    {error && <p role="alert" className="warning">{error}</p>}
+  </section>;
 }

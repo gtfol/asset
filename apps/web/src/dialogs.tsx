@@ -1,3 +1,5 @@
+import { AccountCard } from './account-card';
+import type { InstitutionConnection } from '../shared/account-presentation';
 import { loanLenders } from '../shared/loans';
 import React, { useState } from 'react';
 import { X, Check, Plus, Split, Download, Upload } from 'lucide-react';
@@ -55,11 +57,13 @@ function CategorySelect({
   );
 }
 export function TransactionEditor({
+  connections = [],
   transaction,
   state,
   run,
   onClose,
 }: {
+  connections?: InstitutionConnection[];
   transaction: Transaction;
   reviewMode?: boolean;
   state: State;
@@ -150,7 +154,7 @@ export function TransactionEditor({
         <textarea
           aria-label="Transaction note"
           className="detail-note"
-          rows={2}
+          rows={1}
           placeholder="Add a note"
           value={notes}
           onChange={(e) => setNotes(e.target.value)}
@@ -216,13 +220,7 @@ export function TransactionEditor({
             </span>
           </button>
         )}
-        <div className="detail-account">
-          <span>
-            {account ? account.type.charAt(0).toUpperCase() + account.type.slice(1) : 'Account'}
-          </span>
-          <strong>{account?.name ?? 'Account'}</strong>
-          <small>{account?.mask ? '•• ' + account.mask : t.currency}</small>
-        </div>
+        {account && <div className="detail-account"><AccountCard account={account} connections={connections} /></div>}
         {t.excluded && <p className="muted tiny">Excluded from budget</p>}
         {t.splits.length > 0 && (
           <p className="muted tiny">Split across {t.splits.length} categories</p>
@@ -302,6 +300,7 @@ function AdvancedTransactionEditor({
             notes: draft.notes,
             recurring: draft.recurring ?? '',
             excluded: draft.excluded,
+            loanAccountId: draft.loanAccountId ?? null,
           },
           reviewed: markReviewed ? t.reviewed : draft.reviewed,
         },
@@ -385,6 +384,13 @@ function AdvancedTransactionEditor({
             onChange={(e) => setDraft({ ...draft, notes: e.target.value })}
           />
         </label>
+        {state.accounts.some(a => a.type === 'loan') && <label>
+          Loan payment
+          <select value={draft.loanAccountId ?? ''} onChange={e => setDraft({ ...draft, loanAccountId: e.target.value || null })}>
+            <option value="">Not linked to a loan</option>
+            {state.accounts.filter(a => a.type === 'loan' && a.currency === t.currency && a.id !== t.accountId).map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+          </select>
+        </label>}
         <label>
           Recurring payment label (optional)
           <input
@@ -768,6 +774,7 @@ export function AccountEditor({
                 ...a,
                 id: a?.id ?? uid(),
                 name: f.get('name'),
+                mask: connected ? a.mask : String(f.get('mask') ?? '').trim() || undefined,
                 type: connected ? a.type : f.get('type'),
                 currency: connected ? a.currency : f.get('currency'),
                 balance: connected
@@ -815,6 +822,7 @@ export function AccountEditor({
           Name
           <input name="name" defaultValue={a?.name} required />
         </label>
+        {!connected && <label>Last four (optional)<input name="mask" maxLength={4} defaultValue={a?.mask ?? ''} /></label>}
         <label>
           Type
           <select

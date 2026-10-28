@@ -387,32 +387,29 @@ struct AccountsView: View {
               ).foregroundStyle(Color.assetSecondary)
             }
           }
-          ForEach(["checking", "savings", "credit", "investment", "loan", "manual"], id: \.self) {
-            type in
-            let accounts = store.accounts.filter { $0.text("type") == type }
+          ForEach(["checking", "savings", "credit", "investment", "loan", "manual"], id: \.self) { type in
+            let accounts = store.accounts.filter { $0.text("type") == type && !$0.historyOnly }
             if !accounts.isEmpty {
-              Card(title: type == "credit" ? "Credit cards" : type.capitalized) {
+              Card(title: type == "credit" ? "Credit cards" : type == "manual" ? "Other accounts" : type.capitalized) {
                 ForEach(accounts) { a in
-                  NavigationLink {
-                    AccountDetail(accountID: a.id)
-                  } label: {
-                    HStack {
-                      Image(systemName: "building.columns").foregroundStyle(Color.assetSecondary)
-                        .frame(
-                          width: 30)
-                      VStack(alignment: .leading, spacing: 5) {
-                        Text(a.text("name")).font(
-                          .custom("Lato-Regular", size: 15, relativeTo: .subheadline))
-                        Text("\(a.text("source") == "venmo" ? "Receipt forwarding" : a.text("source")) · \(a.text("mask",a.text("currency")))").font(
-                          .custom("Lato-Regular", size: 12, relativeTo: .caption2)
-                        ).foregroundStyle(Color.assetSecondary)
-                      }
-                      Spacer()
-                      Text(a.text("source") == "venmo" && a.missing("balance")
-                        ? "Receipts only" : money(a.data["balance"], a.text("currency"))).font(
-                        .custom("Lato-Regular", size: 15, relativeTo: .subheadline)
-                      ).monospacedDigit()
-                    }.padding(.vertical, 8)
+                  NavigationLink { AccountDetail(accountID: a.id) } label: {
+                    AccountBalanceRow(account: a)
+                  }.buttonStyle(.plain)
+                }
+              }
+            }
+          }
+          let history = store.accounts.filter { $0.historyOnly }
+          if !history.isEmpty {
+            Card {
+              DisclosureGroup("Other history (\(history.count))") {
+                Text("Past transactions are kept here. These accounts have no current balance and are excluded from net worth.")
+                  .font(.custom("Lato-Regular", size: 13, relativeTo: .caption))
+                  .foregroundStyle(Color.assetSecondary).padding(.vertical, 8)
+                ForEach(history) { a in
+                  NavigationLink { AccountDetail(accountID: a.id) } label: {
+                    HStack { Text(a.text("name")); Spacer(); Text("History only").foregroundStyle(Color.assetSecondary) }
+                      .font(.custom("Lato-Regular", size: 14, relativeTo: .subheadline)).padding(.vertical, 8)
                   }.buttonStyle(.plain)
                 }
               }
@@ -421,6 +418,36 @@ struct AccountsView: View {
         }
       }.padding(20)
     }
+  }
+}
+struct AccountBalanceRow: View {
+  @Environment(\.dynamicTypeSize) private var typeSize
+  let account: Row
+  var body: some View {
+    let layout = typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 12))
+      : AnyLayout(HStackLayout(alignment: .center, spacing: 16))
+    layout {
+      AccountCard(account: account).frame(maxWidth: typeSize.isAccessibilitySize ? .infinity : 172)
+      VStack(alignment: .trailing, spacing: 5) {
+        if !account.missing("balance") {
+          Text("Balance").font(.custom("Lato-Regular", size: 11, relativeTo: .caption2)).foregroundStyle(Color.assetSecondary)
+          Text(money(account.data["balance"], account.text("currency")))
+            .font(.custom("Lato-Medium", size: 16, relativeTo: .body)).monospacedDigit()
+            .fixedSize(horizontal: true, vertical: false)
+        } else {
+          Text(account.balanceLabel).font(.custom("Lato-Regular", size: 13, relativeTo: .caption))
+            .foregroundStyle(Color.assetSecondary)
+        }
+        if let utilization = account.creditUtilization {
+          Text("\(utilization.formatted(.number.precision(.fractionLength(1))))% utilized")
+            .font(.custom("Lato-Regular", size: 12, relativeTo: .caption))
+            .foregroundStyle(utilization >= 30 ? Color.assetAmber : Color.assetSecondary)
+        }
+        if !account.flag("includeInNetWorth") {
+          Text("Not in net worth").font(.custom("Lato-Regular", size: 11, relativeTo: .caption2)).foregroundStyle(Color.assetSecondary)
+        }
+      }.frame(maxWidth: .infinity, alignment: .trailing)
+    }.padding(.vertical, 5)
   }
 }
 struct AccountDetail: View {
@@ -439,9 +466,9 @@ struct AccountDetail: View {
               .font(.custom("Lato-Regular", size: 15, relativeTo: .subheadline))
               .foregroundStyle(Color.assetSecondary)
           } else {
-            Metric(title: a.text("name"), value: money(a.data["balance"], a.text("currency")))
+            Metric(title: a.text("name"), value: a.missing("balance") ? a.balanceLabel : money(a.data["balance"], a.text("currency")))
           }
-          Text("\(a.text("source") == "venmo" ? "Receipt forwarding" : a.text("source")) · as of \(a.text("updatedAt"))").font(
+          Text("\(AccountIdentity(a, connections: store.connections).name) · updated \(String(a.text("updatedAt").prefix(10)))").font(
             .custom("Lato-Regular", size: 13, relativeTo: .caption)
           ).foregroundStyle(Color.assetSecondary)
           if !a.missing("loan") {
@@ -488,6 +515,7 @@ struct AccountDetail: View {
             .custom("Lato-Regular", size: 13, relativeTo: .caption)
           ).foregroundStyle(Color.assetSecondary)
         }
+        if a.text("type") == "loan" { LoanPaymentsView(account: a) }
         if a.text("source") == "bitcoin" { BitcoinAccountDetail(account: a) }
         if a.text("source") != "bitcoin" {
           Card(title: "History coverage") {
@@ -505,6 +533,52 @@ struct AccountDetail: View {
         Button("Edit account") { edit = true }.frame(minHeight: 44)
       }.padding(20)
     }.assetTitle(a.text("name")).sheet(isPresented: $edit) { AccountForm(account: a) }
+  }
+}
+struct LoanPaymentsView: View {
+  @EnvironmentObject var store: Store
+  let account: Row
+  @State var busy = false
+  @State var error = ""
+  var body: some View {
+    let summary = store.calculation("loanPaymentSummary", [account.id])
+    let candidates = summary.rows("candidates")
+    let payments = summary.rows("payments")
+    Card(title: "Payments") {
+      Text("\(payments.count) linked · \(money(summary.data["totalPaid"], account.text("currency"))) paid")
+      Text("Payments stay on the paying account. They include interest and do not change this loan’s balance.")
+        .font(.custom("Lato-Regular", size: 13, relativeTo: .caption)).foregroundStyle(Color.assetSecondary)
+      if !candidates.isEmpty {
+        DisclosureGroup("\(candidates.count) matching payments") {
+          ForEach(candidates) { payment in paymentRow(payment) }
+        }
+        Button(busy ? "Linking…" : "Link \(candidates.count) matching payments") {
+          busy = true
+          Task {
+            defer { busy = false }
+            do {
+              try await store.command("transactions.linkLoan", ["loanAccountId": account.id, "ids": candidates.map(\.id)])
+              error = ""
+            } catch { self.error = error.localizedDescription }
+          }
+        }.buttonStyle(AssetBorderButtonStyle()).disabled(busy)
+      }
+      if !payments.isEmpty {
+        DisclosureGroup("Linked payment history") {
+          ForEach(payments) { payment in paymentRow(payment) }
+        }
+      }
+      if !error.isEmpty { Text(error).foregroundStyle(Color.assetError) }
+    }
+  }
+  func paymentRow(_ payment: Row) -> some View {
+    VStack(alignment: .leading, spacing: 4) {
+      HStack { Text(payment.text("date")); Spacer(); Text(money(payment.data["amount"], payment.text("currency"))) }
+      Text(payment.text("name")).lineLimit(2)
+      Text(store.accounts.first { $0.id == payment.text("accountId") }?.text("name") ?? "")
+        .foregroundStyle(Color.assetSecondary)
+      if !payment.text("matchReason").isEmpty { Text(payment.text("matchReason")).foregroundStyle(Color.assetSecondary) }
+    }.font(.custom("Lato-Regular", size: 13, relativeTo: .caption)).padding(.vertical, 8)
   }
 }
 struct BitcoinAccountDetail: View {

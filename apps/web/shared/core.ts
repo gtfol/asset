@@ -27,6 +27,7 @@ import {
   type Kind,
 } from './schema.js';
 export * from './schema.js';
+export { loanPaymentSummary } from './loans.js';
 export * from './bitcoin.js';
 export const money = (cents: number | null, currency = 'USD') =>
   cents === null
@@ -561,6 +562,19 @@ function applyFinancialCommand(input: State, command: Command, now: string): Sta
       if (splits.reduce((a, b) => a + b.amount, 0) !== t.amount)
         throw Error('Split amounts must equal the original transaction');
       t.splits = splits;
+      break;
+    }
+    case 'transactions.linkLoan': {
+      const ids = new Set(z.array(z.string()).min(1).max(10000).parse(p.ids));
+      const loanId = z.string().parse(p.loanAccountId);
+      const loan = s.accounts.find((a) => a.id === loanId && a.type === 'loan');
+      if (!loan) throw Error('Loan account not found');
+      const payments = s.transactions.filter((t) => ids.has(t.id));
+      if (payments.length !== ids.size || payments.some((t) => t.removed || t.pending))
+        throw Error('Selection contains unavailable or pending transactions');
+      if (payments.some((t) => effective(t).loanAccountId && effective(t).loanAccountId !== loanId))
+        throw Error('A payment is already linked to another loan');
+      for (const t of payments) t.edits.loanAccountId = loanId;
       break;
     }
     case 'transactions.review': {

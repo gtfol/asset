@@ -40,7 +40,7 @@ export function filterTransactionIndex(
   return index.filter(
     ({ transaction: t, searchText }) =>
       (!search || searchText.includes(search)) &&
-      (!filters.account || t.accountId === filters.account) &&
+      (!filters.account || t.accountId === filters.account || t.loanAccountId === filters.account) &&
       (!filters.category ||
         (t.splits.length
           ? t.splits.some((part) => part.categoryId === filters.category)

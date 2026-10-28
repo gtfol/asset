@@ -59,6 +59,22 @@ describe('record-level sync and database egress', () => {
     expect(stored.transactions[42].edits.notes).toBe('Updated note');
     console.info('Delta edit transfer', { fullBytes, ...measured.stats(), clientBytes: Buffer.byteLength(JSON.stringify(update)) });
   });
+  it('links loan payments with a small delta and keeps the link through a bank refresh', async () => {
+    const state = largeState();
+    state.accounts.push({ ...state.accounts[0], id: 'loan', type: 'loan', name: 'Car loan', source: 'manual', connectionId: undefined, providerId: undefined });
+    await save(state); await bank(); const measured = traffic(db);
+    const command: Command = { type: 'transactions.linkLoan', payload: { ids: ['old-42'], loanAccountId: 'loan' } };
+    await mutateState(measured.db, 'owner', s => applyCommand(s, command), undefined, false, undefined, commandScope(command));
+    const update = await getSyncState(measured.db, 'owner', { ownerId: 'owner', revision: 0, delta: true });
+    expect(update).not.toHaveProperty('state');
+    expect(measured.stats().bytes).toBeLessThan(20000);
+    expect((await getState(db, 'owner')).state).toEqual(applyWorkspaceUpdate(state, 0, update));
+    await syncConnection(db, provider({ added: [], modified: [{ transaction_id: 'provider-42', account_id: 'bank-a', name: 'Car payment', date: '2020-01-01', amount: 123.45, iso_currency_code: 'USD', pending: false }], removed: [] }), 'bank', 'owner');
+    const after = (await getState(db, 'owner')).state;
+    expect(after.transactions.find(t => t.id === 'old-42')?.edits.loanAccountId).toBe('loan');
+    const changeType: Command = { type: 'account.save', payload: { ...after.accounts.find(a => a.id === 'loan')!, type: 'checking' } };
+    await expect(mutateState(db, 'owner', s => applyCommand(s, changeType), undefined, false, undefined, commandScope(changeType))).rejects.toThrow('separate loan');
+  });
   it('bank refreshes exclude old history, preserve coverage, and do not churn unchanged snapshots', async () => {
     await save(); await bank(); const measured = traffic(db);
     await syncConnection(measured.db, provider(), 'bank', 'owner');

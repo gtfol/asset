@@ -131,7 +131,9 @@ export function mergeLocalWorkspace(remote: State, input: unknown, namespace: st
   const category = (id: string) => categoryIDs.get(id) ?? id;
   result.accounts.push(...local.accounts.map(a => ({ ...a, id: rename(a.id) })));
   result.transactions.push(...local.transactions.map(t => ({ ...t, id: rename(t.id), accountId: rename(t.accountId),
-    categoryId: category(t.categoryId), edits: { ...t.edits, ...(t.edits.categoryId ? { categoryId: category(t.edits.categoryId) } : {}) },
+    ...(t.loanAccountId ? { loanAccountId: rename(t.loanAccountId) } : {}),
+    categoryId: category(t.categoryId), edits: { ...t.edits, ...(t.edits.categoryId ? { categoryId: category(t.edits.categoryId) } : {}),
+      ...(t.edits.loanAccountId ? { loanAccountId: rename(t.edits.loanAccountId) } : {}) },
     splits: t.splits.map(s => ({ ...s, categoryId: category(s.categoryId) })),
   })));
   for (const collection of ['holdings', 'holdingSnapshots', 'snapshots', 'investmentActivity'] as const)

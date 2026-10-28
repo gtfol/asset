@@ -67,6 +67,7 @@ export const accountSchema = z.object({
     .optional(),
   updatedAt: z.string(),
   mask: z.string().optional(),
+  institutionName: z.string().max(160).optional(),
   connectionId: z.string().optional(),
   providerId: z.string().optional(),
   coverageStart: dateSchema.optional(),
@@ -86,11 +87,13 @@ export const editSchema = z.object({
   kind: kindSchema.optional(),
   notes: z.string().max(5000).optional(),
   recurring: z.string().max(160).optional(),
+  loanAccountId: z.string().nullable().optional(),
   excluded: z.boolean().optional(),
 });
 export const transactionSchema = z.object({
   id: z.string(),
   accountId: z.string(),
+  loanAccountId: z.string().nullable().optional(),
   name: z.string().min(1).max(160),
   date: dateSchema,
   amount: centsSchema.nonnegative(),
@@ -222,6 +225,7 @@ export function validateState(value: unknown): State {
       throw Error('Workspace money total exceeds exact arithmetic limits');
   }
   const ids = new Set(s.accounts.map((a) => a.id));
+  const loans = new Map(s.accounts.filter((a) => a.type === 'loan').map((a) => [a.id, a]));
   const cats = new Set(s.categories.map((c) => c.id));
   const wallets = s.accounts.filter((a) => a.source === 'bitcoin');
   if (wallets.length > 20) throw Error('Track up to 20 Bitcoin addresses per workspace');
@@ -254,6 +258,9 @@ export function validateState(value: unknown): State {
       throw Error('Duplicate split IDs');
     if (!ids.has(t.accountId) || !cats.has(t.edits.categoryId ?? t.categoryId))
       throw Error('Transaction references a missing account or category');
+    const loanId = t.edits.loanAccountId !== undefined ? t.edits.loanAccountId : t.loanAccountId;
+    if (loanId && (!loans.has(loanId) || loans.get(loanId)!.currency !== t.currency || loanId === t.accountId))
+      throw Error('Loan payment must link to a separate loan in the same currency');
     if (t.splits.length && t.splits.reduce((a, b) => a + b.amount, 0) !== t.amount)
       throw Error('Split amounts must equal the original');
     for (const p of t.splits) if (!cats.has(p.categoryId)) throw Error('Unknown split category');

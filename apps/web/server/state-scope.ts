@@ -13,6 +13,7 @@ export type RecordFilter = {
   providerIds?: string[];
   connection?: { id: string; date?: string };
   accountId?: string;
+  loanAccountId?: string;
   date?: string;
   latestAppleBalance?: { accountId: string; excluding: string[] };
   effectiveDayAt?: string;
@@ -38,6 +39,7 @@ export function scopedStateSQL(): string {
       OR (EXISTS (SELECT 1 FROM jsonb_array_elements(state->'accounts') a WHERE a->>'id'=${r}->>'accountId' AND a->>'connectionId'=${f}#>>'{connection,id}')
         AND (${f}#>>'{connection,date}' IS NULL OR ${r}->>'date'=${f}#>>'{connection,date}'))
       OR (${r}->>'accountId'=${f}->>'accountId' AND (${f}->>'date' IS NULL OR ${r}->>'date'=${f}->>'date'))
+      OR (COALESCE(${r}#>'{edits,loanAccountId}',${r}->'loanAccountId')=to_jsonb(${f}->>'loanAccountId'))
       OR (COALESCE(${r}#>>'{edits,date}',${r}->>'date')=to_char((${f}->>'effectiveDayAt')::timestamptz AT TIME ZONE (state#>>'{settings,timezone}'),'YYYY-MM-DD'))
       OR ((${r}->>'holdingId'=${f}#>>'{holdingDay,id}' AND ${r}->>'date'=to_char((${f}#>>'{holdingDay,at}')::timestamptz AT TIME ZONE (state#>>'{settings,timezone}'),'YYYY-MM-DD'))
         OR ${r}->>'id'='holding-snapshot-' || (${f}#>>'{holdingDay,id}') || '-' || to_char((${f}#>>'{holdingDay,at}')::timestamptz AT TIME ZONE (state#>>'{settings,timezone}'),'YYYY-MM-DD'))`;
@@ -57,10 +59,10 @@ export function commandScope(command: Command, operation?: Operation): StateScop
       scope = { transactions: { ids: [id], recurring: true } }; break;
     case 'transaction.update': case 'transaction.reconcile': case 'transaction.split':
       scope = { transactions: { ids: [id] } }; break;
-    case 'transactions.review':
+    case 'transactions.review': case 'transactions.linkLoan':
       scope = { transactions: { ids: Array.isArray(p.ids) ? p.ids.filter((v): v is string => typeof v === 'string') : [] } }; break;
     case 'account.save':
-      scope = { snapshots: { ids: ['snapshot-' + id + '-' + String(p.updatedAt).slice(0, 10)], accountId: id, date: String(p.updatedAt).slice(0, 10) } }; break;
+      scope = { transactions: { loanAccountId: id }, snapshots: { ids: ['snapshot-' + id + '-' + String(p.updatedAt).slice(0, 10)], accountId: id, date: String(p.updatedAt).slice(0, 10) } }; break;
     case 'holding.save':
       scope = { holdings: { ids: [id] }, holdingSnapshots: { holdingDay: { id, at: now } } }; break;
     case 'snapshot.save':

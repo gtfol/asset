@@ -667,6 +667,7 @@ async function commitSync(
           source: 'plaid',
           updatedAt: new Date().toISOString(),
           mask: raw.mask ?? undefined,
+          institutionName: live.institution_name.slice(0, 160),
           connectionId: id,
           providerId: raw.account_id,
           coverageStart: a?.coverageStart,

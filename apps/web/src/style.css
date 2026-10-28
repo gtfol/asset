@@ -3065,3 +3065,46 @@ dialog.transaction-sheet {
 .category-symbol {
   color: var(--category-color, inherit);
 }
+
+/* Bank identity and financial values, without connection-provider jargon. */
+.bank-card {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 18px;
+  min-width: 0;
+  min-height: 94px;
+  padding: 12px;
+  border-radius: 14px;
+  color: #fff;
+  background: linear-gradient(135deg, var(--bank-color), color-mix(in srgb, var(--bank-color) 85%, #fff));
+  text-align: left;
+}
+.bank-card-institution { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 500; }
+.bank-monogram { display: grid; place-items: center; width: 23px; height: 23px; flex-shrink: 0; background: #ffffff24; border-radius: 7px; font-size: 13px; }
+.bank-card-bottom { display: flex; align-items: end; justify-content: space-between; gap: 6px; font-size: 13px; }
+.bank-card-bottom > span:first-child { overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.bank-card-bottom > span:last-child:not(:first-child) { font-size: 11px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.account-list-row { display: grid; grid-template-columns: minmax(130px, 172px) minmax(0, 1fr); gap: 16px; padding: 10px 0; background: transparent; border: 0; border-radius: 14px; }
+.account-list-row.selected { background: var(--accent-soft); }
+.account-values { display: flex; flex-direction: column; align-items: end; gap: 4px; padding-right: 8px; text-align: right; font-size: 13px; }
+.account-values strong { font-size: 16px; font-weight: 500; font-variant-numeric: tabular-nums; }
+.account-list-row .account-values small { margin: 0; font-size: 12px; }
+.history-accounts { margin-top: 24px; padding: 16px; background: var(--surface); border: 1px solid var(--border); border-radius: 18px; }
+.history-account-row { display: flex; width: 100%; align-items: center; justify-content: space-between; gap: 12px; min-height: 44px; }
+.transaction-summary h2 { margin: 18px 0 14px; font-size: 21px; }
+.detail-note { min-height: 36px; margin: 8px 0 12px; }
+.detail-account { display: block; padding: 0; border: 0; background: none; width: min(240px, 100%); margin: 16px auto 8px; }
+.detail-account > .bank-card { display: flex; color: white; }
+.detail-actions { position: static; padding-top: 14px; }
+@media (max-width: 360px) {
+  .account-list-row { grid-template-columns: minmax(115px, 1fr) minmax(0, 1fr); gap: 10px; }
+  .account-values strong { font-size: 14px; }
+}
+
+.loan-payments { margin-block: 20px; }
+.loan-payments details { margin-block: 12px; }
+.loan-payment-list { list-style: none; padding: 0; margin-block: 12px; max-height: 320px; overflow: auto; }
+.loan-payment-list li { display: grid; gap: 4px; padding-block: 10px; border-bottom: 1px solid var(--border); font-size: 13px; }
+.loan-payment-list li > div { display: flex; justify-content: space-between; gap: 12px; }
+.loan-payment-list small { color: var(--muted); }

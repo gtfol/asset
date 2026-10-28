@@ -45,6 +45,7 @@ private enum NativeStoreTests {
     try expect(reopened.accounts.first?.integer("balance") == 12345, "A local account survives a Store restart without signing in")
     let demo = try store.engine.call("createDemo", ["2026-10-15"]) as? JSON ?? [:]
     try expect(!demo.isEmpty, "Production calculation engine must load from the temporary bundle")
+    try checkAccountPresentation()
     try checkGoogleSignIn()
     try checkAppLock()
     try await checkBackgroundSync()
@@ -120,6 +121,22 @@ private enum NativeStoreTests {
     try expect(queue.activeKey == "retry" && !lateWrite && !pendingRan, "Stopped work cannot finish the retry or run its old queue")
     retry?.resume(); retry = nil
     try await eventually { !queue.working }
+  }
+
+  private static func checkAccountPresentation() throws {
+    var value: JSON = ["id": "card", "name": "My card", "source": "plaid", "type": "credit",
+      "connectionId": "bank", "balance": 15000, "creditLimit": 100000]
+    try expect(AccountIdentity(Row(value), connections: [Row(["id": "bank", "institution_name": "Chase"])]).name == "Chase", "Bank identity matches the account connection")
+    try expect(AccountIdentity(Row(value), connections: [Row(["id": "other", "institution_name": "Chase"])]).name == "Credit card", "Unrelated connections do not name an account")
+    try expect(Row(value).creditUtilization == 15, "Credit utilization uses the known limit and balance")
+    value["balance"] = NSNull()
+    try expect(Row(value).creditUtilization == nil && Row(value).balanceLabel == "No balance yet", "Unknown balances do not become zero utilization")
+    value["source"] = "csv"; value["type"] = "manual"; value["includeInNetWorth"] = false
+    try expect(Row(value).historyOnly, "Unvalued, excluded manual records belong in other history")
+    value["balance"] = 0
+    try expect(!Row(value).historyOnly, "A known zero balance remains a regular account")
+    value["source"] = "venmo"; value["balance"] = NSNull()
+    try expect(!Row(value).historyOnly && Row(value).balanceLabel == "Receipts only", "Venmo remains visible without promising a balance")
   }
 
   private static func checkBackgroundReceive(demo: JSON) async throws {
@@ -395,6 +412,10 @@ private enum NativeStoreTests {
       fixture(
         "note", date: "2026-10-14", name: "Corner Store", notes: "Lunch with BIRD team",
         reviewed: true))
+    var linkedPayment = noted.data
+    linkedPayment["loanAccountId"] = "car-loan"
+    try expect(TransactionFilters(account: "car-loan").matches(Row(linkedPayment)), "Loan filters include linked bank payments")
+    try expect(TransactionFilters(account: noted.text("accountId")).matches(Row(linkedPayment)), "Loan links preserve the paying account filter")
     try expect(
       TransactionFilters(query: "bird").matches(noted), "Search includes notes and ignores case")
     try expect(TransactionFilters(query: "little").matches(split), "Search includes merchant names")

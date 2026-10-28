@@ -1,5 +1,13 @@
 # Verification record
 
+## October 28: compact account cards and loan payment history
+
+Transaction sheets fit their content, with actions directly below the account card. Account rows show institution identity, balance, and credit utilization when a limit is available. Provider identifiers are replaced with institution names from the existing connection metadata; future bank refreshes persist the name for offline display. Unvalued manual history excluded from net worth appears under Other history, without deleting transactions or fabricating balances.
+
+Loan accounts can link existing bank withdrawals without changing the original account, categories, exclusions, review status, statement balance, or financial totals. Suggestions require a lender plus an account reference or an unambiguous scheduled payment amount, and exclude inbound, pending, removed, or already-linked records. Links can be changed or cleared in transaction details. Account filters include linked payments; local workspace merge and subsequent bank updates preserve links. Bulk linking reads and syncs only the selected records.
+
+The production web build, **226 web tests**, **142 native checks**, native resource freshness, and calculation parity pass. Tests include loan-link reversal, ambiguous matches, signed payment direction, preservation of totals and edits, workspace merge, and a bank refresh after linking. The 6,000-row database fixture transfers under 20 KB when linking one payment. Browser verification on synthetic data linked two payments, showed them under the loan while retaining their original checking account, and successfully removed one link. Build **12** includes these changes; release availability is recorded below after upload verification.
+
 ## October 28: responsive Apple setup and background sync
 
 Apple account setup no longer disables its entire list during an existing sync. Connecting an account queues its history independently of the setup form; linked accounts appear from the lightweight connection response, without waiting for the complete history download. The sync queue serializes accounts, prioritizes newly connected accounts, deduplicates requests, and advances past a stalled account after 60 seconds without progress. Stop cancels immediately, clears queued work, and retains acknowledged checkpoints. Every resumed provider callback checks a per-run cancellation fence before sending records or saving a checkpoint. Foreground requests are limited to once per five minutes, and changing workspaces clears queued work and account-specific messages.

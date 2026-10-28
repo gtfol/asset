@@ -169,6 +169,8 @@ export function linkImportedAccount(state: State, importedId: string, connectedI
     transactions: state.transactions.filter(t => !consumed.has(t.id)).map(t => {
       const originalId = byProvider.get(t.id);
       const moved = { ...t, accountId: remap(t.accountId),
+        ...(t.loanAccountId ? { loanAccountId: remap(t.loanAccountId) } : {}),
+        edits: { ...t.edits, ...(t.edits.loanAccountId ? { loanAccountId: remap(t.edits.loanAccountId) } : {}) },
         fingerprint: t.fingerprint?.startsWith(connectedId + '|')
           ? importedId + t.fingerprint.slice(connectedId.length) : t.fingerprint };
       return originalId ? preserveImportedDetails(originals.get(originalId)!, moved) : moved;

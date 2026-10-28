@@ -40,6 +40,34 @@ extension Color {
       })
   }
 }
+struct AccountCard: View {
+  @EnvironmentObject var store: Store
+  let account: Row
+  var body: some View {
+    let identity = AccountIdentity(account, connections: store.connections)
+    VStack(alignment: .leading, spacing: 16) {
+      HStack(spacing: 6) {
+        Text(identity.mark).font(.custom("Lato-Medium", size: 13, relativeTo: .caption))
+          .frame(width: 23, height: 23).background(.white.opacity(0.18), in: RoundedRectangle(cornerRadius: 7))
+        Text(identity.name).font(.custom("Lato-Medium", size: 12, relativeTo: .caption))
+          .lineLimit(2).fixedSize(horizontal: false, vertical: true)
+      }
+      HStack(alignment: .bottom, spacing: 5) {
+        Text(account.text("name")).font(.custom("Lato-Medium", size: 13, relativeTo: .caption))
+          .lineLimit(2).fixedSize(horizontal: false, vertical: true)
+        Spacer(minLength: 0)
+        if !account.text("mask").isEmpty {
+          Text(account.text("mask")).font(.custom("Lato-Regular", size: 11, relativeTo: .caption2))
+            .monospacedDigit().fixedSize()
+        }
+      }
+    }.padding(12).frame(maxWidth: .infinity, minHeight: 88, alignment: .leading)
+      .foregroundStyle(.white)
+      .background(LinearGradient(colors: [Color(hex: identity.color), Color(hex: identity.color).opacity(0.86)],
+        startPoint: .topLeading, endPoint: .bottomTrailing), in: RoundedRectangle(cornerRadius: 14))
+      .accessibilityElement(children: .combine)
+  }
+}
 struct AssetBorderButtonStyle: ButtonStyle {
   @Environment(\.isEnabled) var isEnabled
   func makeBody(configuration: Configuration) -> some View {

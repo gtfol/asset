@@ -62,6 +62,49 @@ struct Row: Identifiable {
   func rows(_ key: String) -> [Row] { (data[key] as? [JSON] ?? []).map(Row.init) }
   func object(_ key: String) -> Row { Row(data[key] as? JSON ?? [:]) }
 }
+struct AccountIdentity {
+  let name: String
+  let color: String
+  let mark: String
+  init(_ account: Row, connections: [Row] = []) {
+    let institution = account.text("institutionName", connections.first {
+      $0.id == account.text("connectionId")
+    }?.text("institution_name") ?? "")
+    let original = account.text("name").lowercased()
+    let source = account.text("source")
+    let lender = account.object("loan").text("lender")
+    let label = !institution.isEmpty ? institution
+      : source == "financekit" || original.hasPrefix("apple") ? "Apple"
+      : source == "venmo" || original.hasPrefix("venmo") ? "Venmo"
+      : source == "bitcoin" ? "Bitcoin"
+      : original.hasPrefix("citi ") ? "Citi"
+      : lender == "santander" ? "Santander" : lender == "synchrony" ? "Synchrony"
+      : ["checking": "Checking", "savings": "Savings", "credit": "Credit card",
+         "investment": "Investments", "loan": "Loan", "manual": "Cash & other"][account.text("type")] ?? "Account"
+    name = label
+    let brands = [("bank of america", "c91e3f", "B"), ("chase", "087bbd", "C"),
+      ("j.p. morgan", "087bbd", "C"), ("merrill", "164e86", "M"),
+      ("fidelity", "35752e", "F"), ("ally", "712c79", "a"), ("citi", "084576", "c"),
+      ("robinhood", "216f4b", "R"), ("venmo", "167cba", "V"), ("apple", "303c53", "A"),
+      ("bitcoin", "ae5907", "₿"), ("santander", "c82734", "S"), ("synchrony", "725b20", "S")]
+    let brand = brands.first { label.lowercased().contains($0.0) }
+    color = brand?.1 ?? "496287"
+    mark = brand?.2 ?? String(name.prefix(1))
+  }
+}
+extension Row {
+  var historyOnly: Bool {
+    ["csv", "manual"].contains(text("source")) && text("type") == "manual"
+      && missing("balance") && !flag("includeInNetWorth")
+  }
+  var creditUtilization: Double? {
+    guard text("type") == "credit", !missing("balance"), number("creditLimit") > 0 else { return nil }
+    return max(0, number("balance")) / number("creditLimit") * 100
+  }
+  var balanceLabel: String {
+    !missing("balance") ? "Balance" : text("source") == "venmo" ? "Receipts only" : "No balance yet"
+  }
+}
 struct TransactionFilters: Equatable {
   var query = ""
   var account = ""
@@ -76,7 +119,7 @@ struct TransactionFilters: Equatable {
     {
       return false
     }
-    if !account.isEmpty && transaction.text("accountId") != account { return false }
+    if !account.isEmpty && transaction.text("accountId") != account && transaction.text("loanAccountId") != account { return false }
     if !category.isEmpty {
       let splits = transaction.rows("splits")
       if splits.isEmpty {
