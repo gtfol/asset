@@ -497,11 +497,13 @@ struct AccountDetail: View {
               "Updated from your statements. Balance changes are recorded separately from bank payments."
             ).font(.footnote).foregroundStyle(Color.assetSecondary)
           }
+          if Set(store.row.rows("snapshots").filter { $0.text("accountId") == accountID }.map { $0.text("date") }).count > 1 {
           HistoryChart(
             points: historyPoints(
               store.row.rows("snapshots").filter { $0.text("accountId") == accountID },
               key: "balance", range: range), currency: a.text("currency"))
           RangePicker(range: $range)
+          }
           Toggle(
             "Include in net worth",
             isOn: Binding(

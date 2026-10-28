@@ -63,8 +63,13 @@ struct AccountCard: View {
       }
     }.padding(12).frame(maxWidth: .infinity, minHeight: 88, alignment: .leading)
       .foregroundStyle(.white)
-      .background(LinearGradient(colors: [Color(hex: identity.color), Color(hex: identity.color).opacity(0.86)],
-        startPoint: .topLeading, endPoint: .bottomTrailing), in: RoundedRectangle(cornerRadius: 14))
+      .background {
+        RoundedRectangle(cornerRadius: 14).fill(Color(hex: identity.color))
+          .overlay {
+            RoundedRectangle(cornerRadius: 14).fill(LinearGradient(colors: [.clear, .black.opacity(0.12)],
+              startPoint: .topLeading, endPoint: .bottomTrailing))
+          }
+      }
       .accessibilityElement(children: .combine)
   }
 }

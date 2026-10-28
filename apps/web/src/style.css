@@ -3077,7 +3077,7 @@ dialog.transaction-sheet {
   padding: 12px;
   border-radius: 14px;
   color: #fff;
-  background: linear-gradient(135deg, var(--bank-color), color-mix(in srgb, var(--bank-color) 85%, #fff));
+  background: linear-gradient(135deg, var(--bank-color), color-mix(in srgb, var(--bank-color) 88%, #000));
   text-align: left;
 }
 .bank-card-institution { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 500; }

@@ -1687,7 +1687,7 @@ function Accounts({
               {a.balance != null && new Date(a.updatedAt).getTime() < Date.now() - 4 * 864e5 && (
                 <Status status="Stale balance" />
               )}
-              <LineChart
+              {new Set(state.snapshots.filter(p => p.accountId === a.id).map(p => p.date)).size > 1 && <><LineChart
                 compact
                 currency={a.currency}
                 points={filterHistory(
@@ -1699,7 +1699,7 @@ function Accounts({
                 ).map((p) => ({ date: p.date, value: p.balance }))}
                 label={`${a.name} balance history`}
               />
-              <RangeControl value={range} onChange={setRange} />
+              <RangeControl value={range} onChange={setRange} /></>}
               {a.loan && (
                 <section>
                   <h3>{loanLenders[a.loan.lender].name}</h3>
