@@ -58,61 +58,63 @@ export function ReviewQueue({
           View all <ChevronRight size={14} />
         </button>
       </div>
-      <div className={'daily-review-card' + (batch.total > batch.items.length ? ' has-more' : '')}>
-        {batch.items.length ? (
-          <>
-            <div className="review-date">
-              {label}
-              {batch.dayCount > 6 && (
-                <small>
-                  {' '}
-                  · {batch.items.length} of {batch.dayCount}
-                </small>
-              )}
+      <div className={'daily-review-stack' + (batch.total > batch.items.length ? ' has-more' : '')}>
+        <div className="daily-review-card">
+          {batch.items.length ? (
+            <>
+              <div className="review-date">
+                {label}
+                {batch.dayCount > 6 && (
+                  <small>
+                    {' '}
+                    · {batch.items.length} of {batch.dayCount}
+                  </small>
+                )}
+              </div>
+              <div className="daily-review-rows">
+                {batch.items.map((t) => (
+                  <button key={t.id} className="daily-review-row" onClick={() => onOpen(t.id)}>
+                    <span className="review-merchant">
+                      {t.name}
+                      {t.pending && <small>Pending</small>}
+                    </span>
+                    <Badge category={state.categories.find((c) => c.id === t.categoryId)} />
+                    <span
+                      className={
+                        'amount ' + (['income', 'refund'].includes(t.kind) ? 'positive' : '')
+                      }
+                    >
+                      {['income', 'refund'].includes(t.kind) ? '+' : ''}
+                      {money(t.amount, t.currency)}
+                    </span>
+                    <span className="unreviewed-dot" aria-label="Unreviewed" />
+                  </button>
+                ))}
+              </div>
+              <button
+                className="review-confirm"
+                disabled={busy}
+                onClick={() =>
+                  void review(
+                    batch.items.map((t) => t.id),
+                    true,
+                  )
+                }
+              >
+                <Check size={16} />
+                {busy ? 'Saving…' : 'Mark as reviewed'}
+              </button>
+            </>
+          ) : (
+            <div className="review-complete">
+              <Check size={24} />
+              <div>
+                <h3>All caught up</h3>
+                <p>Your next transactions will appear here.</p>
+              </div>
             </div>
-            <div className="daily-review-rows">
-              {batch.items.map((t) => (
-                <button key={t.id} className="daily-review-row" onClick={() => onOpen(t.id)}>
-                  <span className="review-merchant">
-                    {t.name}
-                    {t.pending && <small>Pending</small>}
-                  </span>
-                  <Badge category={state.categories.find((c) => c.id === t.categoryId)} />
-                  <span
-                    className={
-                      'amount ' + (['income', 'refund'].includes(t.kind) ? 'positive' : '')
-                    }
-                  >
-                    {['income', 'refund'].includes(t.kind) ? '+' : ''}
-                    {money(t.amount, t.currency)}
-                  </span>
-                  <span className="unreviewed-dot" aria-label="Unreviewed" />
-                </button>
-              ))}
-            </div>
-            <button
-              className="review-confirm"
-              disabled={busy}
-              onClick={() =>
-                void review(
-                  batch.items.map((t) => t.id),
-                  true,
-                )
-              }
-            >
-              <Check size={16} />
-              {busy ? 'Saving…' : 'Mark as reviewed'}
-            </button>
-          </>
-        ) : (
-          <div className="review-complete">
-            <Check size={24} />
-            <div>
-              <h3>All caught up</h3>
-              <p>Your next transactions will appear here.</p>
-            </div>
-          </div>
-        )}
+          )}
+        </div>
       </div>
       {undo.length > 0 && (
         <div className="review-undo" role="status">

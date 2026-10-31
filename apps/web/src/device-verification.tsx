@@ -1,16 +1,14 @@
-import React, { useState } from 'react';
+import React, { useId, useState } from 'react';
 import { api } from './App';
 export function DeviceVerification({ onReady }: { onReady: () => Promise<void> }) {
+  const helpId = useId();
   const [code, setCode] = useState(''),
     [error, setError] = useState(''),
     [busy, setBusy] = useState(false);
   return (
-    <main className="welcome">
-      <h1>asset</h1>
-      <h2>Verify this device</h2>
-      <p>
-        Enter your authenticator code to open your private workspace. You can also use your
-        single-use recovery code.
+    <div className="device-verification">
+      <p id={helpId} className="muted">
+        Enter the code from your authenticator app, or use your single-use recovery code.
       </p>
       <form
         onSubmit={async (event) => {
@@ -34,16 +32,25 @@ export function DeviceVerification({ onReady }: { onReady: () => Promise<void> }
             value={code}
             onChange={(e) => setCode(e.target.value)}
             autoComplete="one-time-code"
+            autoCapitalize="none"
+            spellCheck={false}
+            aria-describedby={helpId}
             autoFocus
             maxLength={32}
           />
         </label>
-        {error && <p role="alert">{error}</p>}
+        {error && (
+          <p className="form-error" role="alert">
+            {error}
+          </p>
+        )}
         <button className="primary" disabled={busy || code.length < 6}>
           {busy ? 'Verifying…' : 'Verify device'}
         </button>
       </form>
       <button
+        className="border-button"
+        disabled={busy}
         onClick={async () => {
           await api('/auth/logout', {});
           window.location.assign('/');
@@ -51,6 +58,6 @@ export function DeviceVerification({ onReady }: { onReady: () => Promise<void> }
       >
         Sign out
       </button>
-    </main>
+    </div>
   );
 }

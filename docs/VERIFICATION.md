@@ -1,5 +1,11 @@
 # Verification record
 
+## October 31: verification dialog and review stack layout
+
+Device verification now uses a compact form inside its dialog, without a nested page landmark, sidebar offset, full-screen height, or duplicate title. Application page sizing is scoped to the direct main content. Recovery-code entry, errors, and verification behavior remain available. Review cards now have two narrower decorative cards behind the content, with reserved space underneath; the decoration disappears for the last batch and cannot intercept clicks.
+
+The production build and 16 existing authentication/Apple and review checks pass. Browser checks using the real components and synthetic data verify desktop and 390px phone layouts in light and dark themes, invalid-code feedback, successful verification dismissal, review/undo, and the empty queue. No live credentials or financial records were changed during these checks.
+
 ## October 28: clear cash-flow periods and recorded-history comparisons
 
 Cash Flow labels each amount with its selected month or year-to-date cutoff and explains net cash flow as income minus spending. Month view no longer places a full-year chart underneath monthly totals. Year charts show signed monthly totals with named months, leave future months empty, and open the selected month. Native spending charts use net purchases minus refunds and no longer allocate an unnecessary negative scale. Category totals sort by spending on both platforms.
