@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { api } from './App';
 import { money, type State } from '../shared/core';
-import type { VenmoReceipt } from '../shared/venmo';
+import { parseVenmoReceipt, type VenmoReceipt, type VenmoReceiptDraft } from '../shared/venmo';
 
 type Route = {
   id: string;
@@ -21,6 +21,7 @@ type Receipt = {
   subject?: string;
   text?: string;
   receipt?: VenmoReceipt;
+  draft?: VenmoReceiptDraft;
   createdAt: string;
 };
 type Inbox = { configured: boolean; routes: Route[]; receipts: Receipt[] };
@@ -315,8 +316,18 @@ function ReceiptReview({
   busy: boolean;
   perform: (path?: string, body?: unknown) => Promise<void>;
 }) {
-  const [date, setDate] = useState(r.receipt?.date ?? '');
-  const [amount, setAmount] = useState(r.receipt ? (r.receipt.amount / 100).toFixed(2) : '');
+  // Re-read retained previews too, so older queued receipts benefit immediately.
+  const parsed = parseVenmoReceipt({
+    subject: r.subject ?? '',
+    text: r.text ?? '',
+    timeZone: state.settings.timezone,
+  });
+  const filled = { ...parsed.draft, ...r.draft, ...parsed.receipt, ...r.receipt };
+  const [date, setDate] = useState(filled.date ?? '');
+  const [amount, setAmount] = useState(
+    filled.amount !== undefined ? (filled.amount / 100).toFixed(2) : '',
+  );
+  const filledDetails = !!filled.name && filled.amount !== undefined;
   const candidates = state.transactions.filter(
     (t) =>
       !t.removed &&
@@ -328,11 +339,16 @@ function ReceiptReview({
   );
   return (
     <details className="connection-disclosure venmo-review">
-      <summary>{r.subject ?? 'Receipt'} · Review needed</summary>
-      <p className="muted">{r.reason}</p>
+      <summary>
+        {r.subject ?? 'Receipt'} · {filledDetails ? 'Details filled in' : 'Check details'}
+      </summary>
+      <p className="muted">
+        {r.receipt
+          ? r.reason
+          : (parsed.reason ?? 'Details filled from your receipt. Confirm to save this payment.')}
+      </p>
       {r.text ? (
         <>
-          <pre className="venmo-preview">{r.text}</pre>
           <form
             onSubmit={(e) => {
               e.preventDefault();
@@ -353,7 +369,7 @@ function ReceiptReview({
           >
             <label>
               Person or merchant
-              <input name="name" required maxLength={160} defaultValue={r.receipt?.name} />
+              <input name="name" required maxLength={160} defaultValue={filled.name} />
             </label>
             <div className="form-grid">
               <label>
@@ -380,7 +396,10 @@ function ReceiptReview({
             </div>
             <label>
               Type
-              <select name="kind" defaultValue={r.receipt?.kind ?? 'spending'}>
+              <select name="kind" defaultValue={filled.kind ?? ''} required>
+                <option value="" disabled>
+                  Choose payment type
+                </option>
                 <option value="spending">Payment sent</option>
                 <option value="refund">Reimbursement received</option>
                 <option value="income">Income received</option>
@@ -389,7 +408,7 @@ function ReceiptReview({
             </label>
             <label>
               Category
-              <select name="categoryId" defaultValue={r.receipt?.categoryId ?? 'other'}>
+              <select name="categoryId" defaultValue={filled.categoryId ?? 'other'}>
                 {state.categories
                   .filter((c) => !c.archived)
                   .map((c) => (
@@ -401,11 +420,11 @@ function ReceiptReview({
             </label>
             <label>
               Note
-              <textarea name="notes" maxLength={5000} defaultValue={r.receipt?.notes} />
+              <textarea name="notes" maxLength={5000} defaultValue={filled.notes} />
             </label>
             <label>
               Venmo transaction ID (if shown)
-              <input name="receiptId" maxLength={100} defaultValue={r.receipt?.receiptId} />
+              <input name="receiptId" maxLength={100} defaultValue={filled.receiptId} />
             </label>
             <label>
               Existing imported payment
@@ -422,6 +441,10 @@ function ReceiptReview({
               Confirm payment
             </button>
           </form>
+          <details className="venmo-original">
+            <summary>Original email</summary>
+            <pre className="venmo-preview">{r.text}</pre>
+          </details>
         </>
       ) : (
         <p className="muted">

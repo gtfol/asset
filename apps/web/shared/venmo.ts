@@ -11,6 +11,7 @@ export const venmoReceiptSchema = z.object({
   categoryId: z.string().optional(),
 });
 export type VenmoReceipt = z.infer<typeof venmoReceiptSchema>;
+export type VenmoReceiptDraft = Partial<VenmoReceipt>;
 
 export function mailbox(value: string): string {
   const match = value.trim().match(/^(?:[^<>]*<)?([^<>\s]+@[^<>\s]+)>?$/);
@@ -34,30 +35,94 @@ export function receiptDay(value: string, timeZone = 'America/Los_Angeles'): str
   }
 }
 
-// Deliberately accepts completed payment receipts only. Requests, statements,
-// withdrawals and unfamiliar templates go to review instead of becoming spending.
+function calendarDay(value: string): string | undefined {
+  const clean = value
+    .trim()
+    .replace(/^(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday),?\s+/i, '');
+  if (dateSchema.safeParse(clean).success) return clean;
+  const match = clean.match(/^([A-Za-z]+)\.?\s+(\d{1,2}),?\s+(\d{4})$/);
+  if (!match) return;
+  const months = [
+    'january',
+    'february',
+    'march',
+    'april',
+    'may',
+    'june',
+    'july',
+    'august',
+    'september',
+    'october',
+    'november',
+    'december',
+  ];
+  const month = months.findIndex(
+    (m) => m === match[1].toLowerCase() || m.slice(0, 3) === match[1].toLowerCase(),
+  );
+  if (month < 0) return;
+  const day = `${match[3]}-${String(month + 1).padStart(2, '0')}-${match[2].padStart(2, '0')}`;
+  return dateSchema.safeParse(day).success ? day : undefined;
+}
+
+// Only completed, identifiable payments are imported automatically. Partial
+// results still populate the review form, without guessing missing fields.
 export function parseVenmoReceipt(input: {
   subject: string;
   text: string;
   date?: string;
   timeZone?: string;
-}): { receipt?: VenmoReceipt; reason?: string } {
-  const text = input.text.replace(/\r/g, '').replace(/\u00a0/g, ' ');
+}): { receipt?: VenmoReceipt; draft?: VenmoReceiptDraft; reason?: string } {
+  const text = input.text
+    .replace(/\r/g, '')
+    .replace(/[\u00a0\u202f]/g, ' ')
+    .replace(/[\u200b\u200c\u200d\ufeff]/g, '')
+    .replace(/\$\s*((?:\d+|\d{1,3}(?:,\d{3})+))\s*\.\s*(\d{2})(?!\d)/g, '$$$1.$2');
   const subject = input.subject.replace(/^(?:(?:fwd?|re):\s*)+/i, '').trim();
+  const valueAfter = (label: string) =>
+    text
+      .match(
+        new RegExp(`(?:^|\\n)[ \\t]*(?:${label})[ \\t]*:?[ \\t]*(?:\\n[ \\t]*)*([^\\n]+)`, 'i'),
+      )?.[1]
+      ?.trim();
+  const receiptId =
+    text.match(
+      /\b(?:transaction|payment)\s*(?:id|number|#)\s*:?\s*((?=[A-Z0-9]*\d)[A-Z0-9]{8,30})\b/i,
+    )?.[1] ?? text.match(/https:\/\/(?:www\.)?venmo\.com\/transaction\/(\d{8,30})\b/i)?.[1];
+  const printedDate = valueAfter('date|payment date|initiated on');
+  const date = printedDate
+    ? calendarDay(printedDate)
+    : receiptDay(input.date ?? '', input.timeZone);
+  const transfer = /^Your Venmo (?:Standard|Instant) transfer has been initiated[.!]?$/i.test(
+    subject,
+  );
+  if (transfer) {
+    const amountText = valueAfter('transfer amount');
+    const amount = amountText?.match(/^\$((?:\d+|\d{1,3}(?:,\d{3})+)\.\d{2})$/);
+    const destination = valueAfter('destination');
+    return {
+      draft: {
+        ...(receiptId ? { receiptId } : {}),
+        ...(date ? { date } : {}),
+        ...(amount ? { amount: Math.round(Number(amount[1].replace(/,/g, '')) * 100) } : {}),
+        name: destination ? `Transfer to ${destination}`.slice(0, 160) : 'Venmo bank transfer',
+        kind: 'transfer',
+        notes: 'Venmo transfer initiated; arrival is not yet confirmed.',
+      },
+      reason:
+        'Transfer details filled in. This email confirms initiation, not arrival at your bank.',
+    };
+  }
   if (
     /\b(request(?:ed)?|reminder|cancel(?:ed|led)?|declined|failed|pending|statement)\b/i.test(
       subject,
     )
   )
     return { reason: 'This is not a completed payment receipt.' };
-  const headings = [
-    subject,
-    ...text
-      .split('\n')
-      .map((s) => s.trim())
-      .filter(Boolean)
-      .slice(0, 25),
-  ];
+  const bodyLines = text
+    .split('\n')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const headings = [subject, ...bodyLines.slice(0, 25)];
   let name = '',
     dollars = '',
     kind: 'spending' | 'refund' = 'spending';
@@ -81,20 +146,43 @@ export function parseVenmoReceipt(input: {
     }
     if (name) break;
   }
-  if (!name) return { reason: 'Review the payment direction, person, and amount.' };
-  const receiptId =
-    text.match(
-      /\b(?:transaction|payment)\s*(?:id|number|#)\s*:?\s*((?=[A-Z0-9]*\d)[A-Z0-9]{8,30})\b/i,
-    )?.[1] ?? text.match(/https:\/\/(?:www\.)?venmo\.com\/transaction\/(\d{8,30})\b/i)?.[1];
-  if (!receiptId)
-    return { reason: 'This receipt has no recognized transaction ID. Review it before importing.' };
-  const date = receiptDay(input.date ?? '', input.timeZone);
-  if (!date) return { reason: 'Review the original payment date.' };
+  if (!name)
+    return {
+      draft: { ...(date ? { date } : {}), ...(receiptId ? { receiptId } : {}) },
+      reason: 'Review the payment direction, person, and amount.',
+    };
   const amount = Math.round(Number(dollars.replace(/,/g, '')) * 100);
+  const transactionLink = bodyLines.findIndex((line) => /^See transaction(?:\s|$)/i.test(line));
+  const noteAboveLink = transactionLink > 0 ? bodyLines[transactionLink - 1] : '';
   const notes =
-    text.match(/(?:^|\n)(?:Note|Payment note|For)\s*:?\s*\n([^\n]{1,5000})/i)?.[1]?.trim() ?? '';
-  const result = venmoReceiptSchema.safeParse({ receiptId, date, name, amount, kind, notes });
-  return result.success ? { receipt: result.data } : { reason: 'Review the payment details.' };
+    text.match(/(?:^|\n)(?:Note|Payment note|For)\s*:?\s*\n([^\n]{1,5000})/i)?.[1]?.trim() ??
+    (noteAboveLink && !/^(?:\$|You paid\b)|\bpaid you\b/i.test(noteAboveLink)
+      ? noteAboveLink.slice(0, 5000)
+      : '');
+  const draft: VenmoReceiptDraft = {
+    name,
+    amount,
+    kind,
+    notes,
+    ...(date ? { date } : {}),
+    ...(receiptId ? { receiptId } : {}),
+  };
+  const status = valueAfter('status');
+  if (status && !/^completed$/i.test(status))
+    return {
+      draft,
+      reason: 'This payment is not marked completed. Check its status before importing.',
+    };
+  if (!receiptId)
+    return {
+      draft,
+      reason: 'Details filled in. Confirm this payment because its transaction ID is missing.',
+    };
+  if (!date) return { draft, reason: 'Details filled in. Add the original payment date.' };
+  const result = venmoReceiptSchema.safeParse(draft);
+  return result.success
+    ? { receipt: result.data }
+    : { draft, reason: 'Review the payment details.' };
 }
 
 export function venmoBankTransfer(t: Transaction, state: State): Transaction {

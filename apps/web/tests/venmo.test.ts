@@ -67,6 +67,70 @@ describe('Venmo receipt interpretation', () => {
       parseVenmoReceipt({ ...input, text: 'Transaction ID: unavailable' }).receipt,
     ).toBeUndefined();
   });
+  it('uses the printed payment date when email headers are missing or delayed', () => {
+    const text =
+      'You paid Taylor Reed\n$\n34\n.50\nDinner\nSee transaction\nTransaction details\nDate\nOct 28, 2026\nStatus\nCompleted\nTransaction ID\n1234567890123456';
+    for (const date of [undefined, 'Sat, 31 Oct 2026 12:00:00 +0000']) {
+      expect(
+        parseVenmoReceipt({ subject: 'You paid Taylor Reed $34.50', text, date }).receipt,
+      ).toEqual({
+        receiptId: '1234567890123456',
+        name: 'Taylor Reed',
+        date: '2026-10-28',
+        amount: 3450,
+        kind: 'spending',
+        notes: 'Dinner',
+      });
+    }
+    expect(parseVenmoReceipt({ subject: 'Payment', text }).receipt?.amount).toBe(3450);
+  });
+  it('retains known fields when the date or identifier needs confirmation', () => {
+    const missingDate = parseVenmoReceipt({ ...input, date: undefined });
+    expect(missingDate.receipt).toBeUndefined();
+    expect(missingDate.draft).toMatchObject({
+      name: 'Taylor Reed',
+      amount: 102435,
+      kind: 'spending',
+      receiptId: '1234567890123456',
+      notes: 'Dinner',
+    });
+    expect(missingDate.draft?.date).toBeUndefined();
+    const missingID = parseVenmoReceipt({ ...input, text: 'Date\nOct 28, 2026' });
+    expect(missingID.receipt).toBeUndefined();
+    expect(missingID.draft).toMatchObject({
+      name: 'Taylor Reed',
+      date: '2026-10-28',
+      amount: 102435,
+    });
+    expect(missingID.draft?.receiptId).toBeUndefined();
+  });
+  it('does not guess invalid calendar dates or import incomplete payments', () => {
+    const badDate = parseVenmoReceipt({ ...input, text: input.text + '\nDate\nFeb 30, 2026' });
+    expect(badDate.receipt).toBeUndefined();
+    expect(badDate.draft?.date).toBeUndefined();
+    for (const status of ['Pending', 'Declined', 'Cancelled']) {
+      expect(
+        parseVenmoReceipt({ ...input, text: input.text + '\nStatus\n' + status }).receipt,
+      ).toBeUndefined();
+    }
+    expect(
+      parseVenmoReceipt({ ...input, subject: 'Taylor requested $20.00' }).draft,
+    ).toBeUndefined();
+  });
+  it('fills bank-transfer fields without treating an initiation email as completed spending', () => {
+    const parsed = parseVenmoReceipt({
+      subject: 'Your Venmo Standard transfer has been initiated',
+      text: 'Standard transfer initiated\nInitiated on\nFriday, October 30, 2026\nTransfer Amount\n$44.00\nTransfer transaction ID\n12345678901\nEstimated arrival\nTuesday, November 03, 2026\nDestination\nExample Bank ····1234',
+    });
+    expect(parsed.receipt).toBeUndefined();
+    expect(parsed.draft).toMatchObject({
+      receiptId: '12345678901',
+      date: '2026-10-30',
+      amount: 4400,
+      name: 'Transfer to Example Bank ····1234',
+      kind: 'transfer',
+    });
+  });
   it('preserves imported metadata and matches one receipt only once, including removed records', () => {
     const state = fixture();
     state.accounts[0].source = 'venmo';
@@ -376,6 +440,43 @@ describe('Venmo receiving lifecycle', () => {
     await webhook();
     expect((await getState(db, 'owner')).state.transactions).toHaveLength(1);
     expect((await getState(db, 'owner')).state.notifications?.items ?? []).toHaveLength(0);
+  });
+  it('imports dated receipt bodies without a Date header and deduplicates later delivery', async () => {
+    mail.headers = {};
+    mail.text =
+      'You paid Taylor Reed\n$20.00\nDinner\nSee transaction\nDate\nOct 28, 2026\nTransaction ID\n1234567890123456';
+    expect((await webhook()).status).toBe(202);
+    expect((await inbox()).receipts[0].status).toBe('imported');
+    let saved = (await getState(db, 'owner')).state.transactions;
+    expect(saved).toHaveLength(1);
+    expect(saved[0]).toMatchObject({
+      date: '2026-10-28',
+      amount: 2000,
+      name: 'Taylor Reed',
+      notes: 'Dinner',
+    });
+    mail.id = randomUUID();
+    mail.message_id = randomUUID();
+    await webhook();
+    saved = (await getState(db, 'owner')).state.transactions;
+    expect(saved).toHaveLength(1);
+  });
+  it('keeps prefilled details in encrypted review previews when a field is missing', async () => {
+    mail.headers = {};
+    await webhook();
+    const item = (await inbox()).receipts[0];
+    expect(item.status).toBe('review');
+    expect(item.draft).toMatchObject({
+      name: 'Taylor Reed',
+      amount: 2000,
+      kind: 'spending',
+      receiptId: '1234567890123456',
+    });
+    expect(item.draft.date).toBeUndefined();
+    expect(
+      JSON.stringify((await db.query('SELECT encrypted_payload FROM venmo_receipts')).rows),
+    ).not.toContain('Taylor Reed');
+    expect((await getState(db, 'owner')).state.transactions).toHaveLength(0);
   });
   it('shows a short-lived authenticated Gmail forwarding confirmation only to its owner', async () => {
     mail.from = 'forwarding-noreply@google.com';

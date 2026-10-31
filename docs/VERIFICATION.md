@@ -1,5 +1,11 @@
 # Verification record
 
+## October 31: Venmo receipt autofill
+
+Receipt parsing now reads the payment date printed in Venmo emails, handles amounts split across HTML text lines, and retains known fields when a receipt needs confirmation. Existing retained review previews are reparsed in the form, so queued receipts get the same autofill without a data migration. Bank-transfer initiation emails fill transfer details but are not imported automatically as completed payments. Unknown dates and payment directions remain explicit missing fields; incoming payments remain reimbursements unless changed by the user.
+
+All 25 Venmo tests pass, including missing email headers, delayed delivery, invalid dates, incomplete payments, encrypted partial previews, and duplicate delivery. The production build and native resource freshness check pass. The four reported email templates were checked locally using the production HTML-to-text conversion: all three payments parsed with their original dates, amounts, notes, and IDs; the bank transfer produced a transfer draft. Browser checks with synthetic receipts verified populated fields, successful confirmation, received-payment classification, missing-date fallback, and a 390px embedded viewport. No live receipt was confirmed during those checks.
+
 ## October 31: verification dialog and review stack layout
 
 Device verification now uses a compact form inside its dialog, without a nested page landmark, sidebar offset, full-screen height, or duplicate title. Application page sizing is scoped to the direct main content. Recovery-code entry, errors, and verification behavior remain available. Review cards now have two narrower decorative cards behind the content, with reserved space underneath; the decoration disappears for the last batch and cannot intercept clicks.

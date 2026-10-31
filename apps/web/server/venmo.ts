@@ -240,6 +240,7 @@ export async function processVenmoEmail(
     subject: email.subject.slice(0, 300),
     text: text.slice(0, 12000),
     receipt: parsed.receipt,
+    draft: parsed.draft,
   };
   const historical =
     !parsed.receipt || parsed.receipt.date < receiptDay(String(route.created_at), timeZone)!;
